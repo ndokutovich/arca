@@ -1,0 +1,43 @@
+{
+  "name": "@ndokutovich/arca",
+  "version": "1.0.0",
+  "description": "A vault for everything Claude Code throws away: session transcripts kept in git and indexed — hybrid search, cross-session topic threads, cross-project entities, and a temporal knowledge graph.",
+  "type": "module",
+  "main": "mcp-server.js",
+  "scripts": {
+    "index": "node indexer.js",
+    "index:full": "node indexer.js --full",
+    "entities": "node build-entities.js",
+    "kg": "node build-kg.js",
+    "threads": "node build-threads.js",
+    "test": "node --test",
+    "serve": "node mcp-server.js",
+    "threads:map": "node build-thread-map.js",
+    "import:claude-ai": "node import-claude-ai.js"
+  },
+  "dependencies": {
+    "@huggingface/transformers": "^3.4.1",
+    "@modelcontextprotocol/sdk": "^1.20.0",
+    "better-sqlite3": "^12.4.1",
+    "sqlite-vec": "^0.1.7-alpha.2"
+  },
+  "license": "MIT",
+  "keywords": [
+    "claude-code",
+    "memory",
+    "mcp",
+    "embeddings",
+    "sqlite-vec",
+    "knowledge-graph",
+    "episodic-memory"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ndokutovich/arca.git"
+  },
+  "author": "ndokutovich",
+  "bugs": {
+    "url": "https://github.com/ndokutovich/arca/issues"
+  },
+  "homepage": "https://github.com/ndokutovich/arca#readme"
+}

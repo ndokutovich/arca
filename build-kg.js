@@ -1,0 +1,74 @@
+#!/usr/bin/env node
+/**
+ * Temporal knowledge-graph derivation pass.
+ *
+ * Reads indexed exchanges in CHRONOLOGICAL order and feeds extracted facts to
+ * addTriple(), so single-valued predicates (runs_on_port, has_version)
+ * supersede correctly and build valid-time windows. Auto-extracted triples are
+ * cleared and rebuilt each run; manually-added facts (method='manual') are kept.
+ *
+ * Usage:
+ *   node build-kg.js          # rebuild auto facts
+ *   node build-kg.js --quiet
+ */
+
+import { getDb, closeDb, clearAutoTriples, addTriple, kgStats } from './lib/db.js';
+import { extractFacts } from './lib/kg.js';
+
+const METHOD = { runs_on_port: 'auto:port', has_version: 'auto:version', replaced_by: 'auto:transition' };
+
+function main() {
+  const quiet = process.argv.includes('--quiet');
+  const log = quiet ? () => {} : (m) => console.error(m);
+
+  const db = getDb();
+  const removed = clearAutoTriples();
+  log(`Cleared ${removed} prior auto-triples.`);
+
+  // Gate facts to resolved entities (project span >= 2) — KG rides on real nodes.
+  const known = new Set(db.prepare('SELECT id FROM entities WHERE project_count >= 2').all().map((r) => r.id));
+  log(`${known.size} known entity subjects.`);
+
+  const rows = db.prepare(`
+    SELECT id, project, timestamp, user_message, assistant_message
+    FROM exchanges
+    WHERE is_system_noise = 0
+    ORDER BY COALESCE(timestamp, '') ASC, id ASC
+  `).all();
+  log(`Scanning ${rows.length} exchanges chronologically...`);
+
+  let added = 0;
+  for (const r of rows) {
+    const day = (r.timestamp || '').slice(0, 10) || null;
+    for (const msg of [r.user_message, r.assistant_message]) {
+      if (!msg) continue;
+      for (const f of extractFacts(msg, { known })) {
+        const id = addTriple({
+          subject: f.subject, predicate: f.predicate, object: f.object,
+          valid_from: day, confidence: f.confidence,
+          method: METHOD[f.predicate] || 'auto', source_exchange: r.id, source_project: r.project,
+        });
+        if (id) added++;
+      }
+    }
+  }
+
+  const s = kgStats();
+  log(`Done: ${added} triple-writes · ${s.triples} total (${s.current} current) across ${s.subjects} subjects`);
+
+  if (!quiet) {
+    console.error('\nPredicates:');
+    for (const p of s.predicates) console.error(`  ${String(p.c).padStart(4)}  ${p.predicate}`);
+    console.error('\nSample current facts:');
+    const sample = db.prepare(`
+      SELECT subject, predicate, object, valid_from FROM kg_triples
+      WHERE valid_to IS NULL AND method LIKE 'auto:%'
+      ORDER BY subject, predicate LIMIT 25
+    `).all();
+    for (const t of sample) console.error(`  ${t.subject} —${t.predicate}→ ${t.object}  (since ${t.valid_from || '?'})`);
+  }
+
+  closeDb();
+}
+
+main();

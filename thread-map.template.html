@@ -1,0 +1,293 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Thought Navigator — vault threads</title>
+<style>
+  :root { --bg:#0b0e14; --panel:#11151f; --line:#1d2430; --fg:#c8d3e6; --dim:#6b7686; --accent:#5ec8f8; }
+  * { box-sizing:border-box; }
+  html,body { margin:0; height:100%; background:var(--bg); color:var(--fg);
+    font:13px/1.5 ui-monospace,"SF Mono",Menlo,Consolas,monospace; overflow:hidden; }
+  #topbar { display:flex; align-items:center; gap:14px; padding:10px 16px; border-bottom:1px solid var(--line); background:var(--panel); }
+  #topbar h1 { font-size:14px; font-weight:600; margin:0; letter-spacing:.3px; }
+  #topbar .stat { color:var(--dim); font-size:12px; }
+  .views { display:flex; gap:6px; margin-left:auto; }
+  .views button { background:transparent; color:var(--dim); border:1px solid var(--line); padding:5px 12px; border-radius:6px; cursor:pointer; font:inherit; }
+  .views button.active { color:#fff; border-color:var(--accent); background:#13202b; }
+  #main { display:flex; height:calc(100% - 49px); }
+  #stage { position:relative; flex:1; min-width:0; }
+  #stage > * { position:absolute; inset:0; width:100%; height:100%; }
+  canvas { display:block; }
+  .hidden { display:none !important; }
+  #panel { width:380px; border-left:1px solid var(--line); background:var(--panel); padding:16px; overflow-y:auto; }
+  #panel.empty { color:var(--dim); display:flex; align-items:center; justify-content:center; text-align:center; }
+  #panel h2 { font-size:15px; margin:0 0 4px; color:#fff; }
+  #panel .meta { color:var(--dim); font-size:12px; margin-bottom:10px; }
+  #panel .chips { display:flex; flex-wrap:wrap; gap:5px; margin-bottom:14px; }
+  #panel .chip { background:#0d141d; border:1px solid var(--line); border-radius:10px; padding:2px 8px; font-size:11px; color:var(--fg); }
+  #panel .seg { padding:7px 0; border-top:1px solid var(--line); }
+  #panel .seg .d { color:var(--accent); font-size:11px; }
+  #panel .seg .p { color:var(--dim); font-size:11px; }
+  #panel .seg .s { font-size:12px; color:var(--fg); margin-top:2px; }
+  #legend { position:absolute; left:12px; bottom:12px; max-width:46%; display:flex; flex-wrap:wrap; gap:4px 10px; pointer-events:none; }
+  #legend span { color:var(--dim); font-size:11px; display:flex; align-items:center; gap:5px; }
+  #legend i { width:9px; height:9px; border-radius:2px; display:inline-block; }
+  .hint { position:absolute; right:12px; bottom:12px; color:var(--dim); font-size:11px; pointer-events:none; }
+  #tip { position:absolute; pointer-events:none; background:#0d141d; border:1px solid var(--line); border-radius:5px; padding:4px 8px; font-size:11px; color:#fff; display:none; z-index:9; max-width:280px; }
+</style>
+</head>
+<body>
+  <div id="topbar">
+    <h1>🧠 Thought Navigator</h1>
+    <span class="stat" id="hdrStat"></span>
+    <div class="views">
+      <button data-v="graph" class="active">Созвездие</button>
+      <button data-v="river">Река времени</button>
+      <button data-v="arcs">Таймлайн + дуги</button>
+    </div>
+  </div>
+  <div id="main">
+    <div id="stage">
+      <canvas id="graph"></canvas>
+      <svg id="river" class="hidden"></svg>
+      <svg id="arcs" class="hidden"></svg>
+      <div id="legend"></div>
+      <div class="hint" id="hint"></div>
+      <div id="tip"></div>
+    </div>
+    <aside id="panel" class="empty">Кликни тему — развернётся её хронология сквозь все сессии.</aside>
+  </div>
+
+<script>
+const DATA = /*__DATA__*/ null;
+const SVGNS = "http://www.w3.org/2000/svg";
+const T = DATA.threads, E = DATA.edges, SEG = DATA.segments, PC = DATA.projectColors;
+const byId = Object.fromEntries(T.map(t => [t.id, t]));
+const shortP = p => p.replace(/^w---proj--own--/,'').replace(/^w---proj--/,'').replace(/^C---init-w--proj--own--/,'').replace(/claude-code-advanced--/,'').replace(/ideator-?-?/,'');
+const segsOf = id => SEG.filter(s => s.t === id).sort((a,b)=> (a.ts||'').localeCompare(b.ts||''));
+document.getElementById('hdrStat').textContent =
+  `${T.length} тем · ${SEG.length} тактов · ${new Set(SEG.map(s=>s.p)).size} проектов`;
+
+// ---------- shared selection / detail panel ----------
+let selected = null;
+function selectThread(id) {
+  selected = id; const t = byId[id]; const panel = document.getElementById('panel');
+  panel.classList.remove('empty');
+  const segs = segsOf(id);
+  panel.innerHTML =
+    `<h2>${t.label}</h2>
+     <div class="meta">${t.ex} обменов · ${t.sess} сессий · ${t.proj} проектов · ⤺${t.ret} возвратов<br>
+      ${(t.first||'').slice(0,10)} → ${(t.last||'').slice(0,10)}</div>
+     <div class="chips">${(t.projects||[]).map(p=>`<span class="chip" style="border-color:${PC[p]||'#333'}">${shortP(p)}</span>`).join('')}</div>
+     <div style="color:var(--dim);font-size:11px;margin-bottom:6px">ХРОНОЛОГИЯ — ${segs.length} тактов</div>` +
+    segs.map(s=>`<div class="seg"><span class="d">${(s.ts||'').slice(0,10)}</span>
+       <span class="p"> · ${shortP(s.p)} · ${s.ex}ex</span>
+       <div class="s">${(s.s||'').replace(/</g,'&lt;')}</div></div>`).join('');
+  renderGraph(); // refresh highlight if visible
+}
+
+// ---------- color legend (by project, top ones) ----------
+(function(){
+  const counts = {}; for (const s of SEG) counts[s.p]=(counts[s.p]||0)+s.ex;
+  const top = Object.entries(counts).sort((a,b)=>b[1]-a[1]).slice(0,12);
+  document.getElementById('legend').innerHTML =
+    top.map(([p])=>`<span><i style="background:${PC[p]||'#555'}"></i>${shortP(p)}</span>`).join('');
+})();
+
+// ================= VIEW 1: CONSTELLATION (force graph on canvas) =================
+const cv = document.getElementById('graph'), ctx = cv.getContext('2d');
+let nodes = [], W=0, H=0, dpr=window.devicePixelRatio||1;
+const maxEx = Math.max(...T.map(t=>t.ex));
+function initGraph() {
+  nodes = T.map((t,i)=>{
+    const a = i/T.length*Math.PI*2;
+    return { t, x:Math.cos(a)*200+ (i%7)*7, y:Math.sin(a)*200 + (i%5)*7, vx:0, vy:0,
+             r: 6 + 26*Math.sqrt(t.ex/maxEx) };
+  });
+}
+function sizeCanvas() {
+  const s = document.getElementById('stage');
+  W = s.clientWidth; H = s.clientHeight;
+  cv.width = W*dpr; cv.height = H*dpr; ctx.setTransform(dpr,0,0,dpr,0,0);
+}
+function stepForce() {
+  const cx=W/2, cy=H/2;
+  for (let i=0;i<nodes.length;i++){
+    const a=nodes[i];
+    for (let j=i+1;j<nodes.length;j++){
+      const b=nodes[j]; let dx=a.x-b.x, dy=a.y-b.y; let d2=dx*dx+dy*dy+0.01;
+      const f = 1400/d2; const d=Math.sqrt(d2);
+      const fx=dx/d*f, fy=dy/d*f; a.vx+=fx; a.vy+=fy; b.vx-=fx; b.vy-=fy;
+    }
+  }
+  for (const [i,j,w] of E){
+    const a=nodes[i], b=nodes[j]; let dx=b.x-a.x, dy=b.y-a.y; const d=Math.hypot(dx,dy)+0.01;
+    const target=90; const f=(d-target)*0.012*(0.4+w);
+    const fx=dx/d*f, fy=dy/d*f; a.vx+=fx; a.vy+=fy; b.vx-=fx; b.vy-=fy;
+  }
+  for (const n of nodes){
+    n.vx += (cx-n.x)*0.004; n.vy += (cy-n.y)*0.004;
+    n.vx*=0.86; n.vy*=0.86; n.x+=n.vx; n.y+=n.vy;
+  }
+}
+function drawGraph() {
+  ctx.clearRect(0,0,W,H);
+  ctx.lineWidth=1;
+  for (const [i,j,w] of E){
+    const a=nodes[i], b=nodes[j];
+    ctx.strokeStyle=`rgba(94,200,248,${0.06+0.20*w})`;
+    ctx.beginPath(); ctx.moveTo(a.x,a.y); ctx.lineTo(b.x,b.y); ctx.stroke();
+  }
+  for (const n of nodes){
+    const t=n.t, col=PC[t.domProject]||'#5ec8f8', sel=selected===t.id;
+    if (t.ret>=25){ ctx.beginPath(); ctx.arc(n.x,n.y,n.r+4,0,7); ctx.strokeStyle='rgba(255,120,90,.5)'; ctx.lineWidth=2; ctx.stroke(); }
+    ctx.beginPath(); ctx.arc(n.x,n.y,n.r,0,7);
+    ctx.fillStyle=col; ctx.globalAlpha=sel?1:0.85; ctx.fill(); ctx.globalAlpha=1;
+    if (sel){ ctx.lineWidth=2; ctx.strokeStyle='#fff'; ctx.stroke(); }
+    if (n.r>14 || sel){
+      ctx.fillStyle=sel?'#fff':'#9fb0c4'; ctx.font='11px ui-monospace,monospace'; ctx.textAlign='center';
+      ctx.fillText(t.label.split(' · ').slice(0,2).join(' · '), n.x, n.y+n.r+12);
+    }
+  }
+}
+let rafOn=false;
+function loop(){ if(!rafOn) return; stepForce(); drawGraph(); requestAnimationFrame(loop); }
+function renderGraph(){ if(state!=='graph') return; drawGraph(); }
+function nodeAt(mx,my){ for(let i=nodes.length-1;i>=0;i--){ const n=nodes[i]; if(Math.hypot(mx-n.x,my-n.y)<=n.r+3) return n; } return null; }
+cv.addEventListener('mousemove',e=>{
+  const r=cv.getBoundingClientRect(); const n=nodeAt(e.clientX-r.left,e.clientY-r.top);
+  const tip=document.getElementById('tip');
+  if(n){ tip.style.display='block'; tip.style.left=(e.clientX-r.left+12)+'px'; tip.style.top=(e.clientY-r.top+12)+'px';
+    tip.textContent=`${n.t.label}  ·  ${n.t.ex}ex ${n.t.sess}sess ⤺${n.t.ret}`; cv.style.cursor='pointer'; }
+  else { tip.style.display='none'; cv.style.cursor='default'; }
+});
+cv.addEventListener('click',e=>{ const r=cv.getBoundingClientRect(); const n=nodeAt(e.clientX-r.left,e.clientY-r.top); if(n) selectThread(n.t.id); });
+
+// ================= VIEW 2: RIVER (stacked area / themeriver, SVG) =================
+function tsToDay(ts){ return Date.parse((ts||'').slice(0,10)+'T00:00:00Z'); }
+// Domain by exchange-weighted percentiles, so a few old outlier segments
+// don't stretch the axis and crush the real mass into a spike.
+const dayEx = SEG.map(s=>[tsToDay(s.ts), s.ex]).filter(d=>!isNaN(d[0])).sort((a,b)=>a[0]-b[0]);
+const totalEx = dayEx.reduce((s,d)=>s+d[1],0) || 1;
+function pctDay(p){ let acc=0; for(const [d,e] of dayEx){ acc+=e; if(acc>=totalEx*p) return d; } return dayEx[dayEx.length-1][0]; }
+const DMIN=pctDay(0.04), DMAX=pctDay(0.995), WEEK=7*864e5;
+const clampX=(x,lo,hi)=>Math.max(lo,Math.min(hi,x));
+const NW = Math.max(1, Math.ceil((DMAX-DMIN)/WEEK)+1);
+function renderRiver(){
+  const svg=document.getElementById('river'); const w=svg.clientWidth, h=svg.clientHeight;
+  svg.setAttribute('viewBox',`0 0 ${w} ${h}`); svg.innerHTML='';
+  // top threads by exchanges
+  const top = [...T].sort((a,b)=>b.ex-a.ex).slice(0,14);
+  const bins = new Map(top.map(t=>[t.id, new Float64Array(NW)]));
+  for (const s of SEG){ const arr=bins.get(s.t); if(!arr) continue; const wi=Math.floor((tsToDay(s.ts)-DMIN)/WEEK); if(wi>=0&&wi<NW) arr[wi]+=s.ex; }
+  // smooth a touch
+  for (const arr of bins.values()){ for(let pass=0;pass<1;pass++){ for(let i=1;i<NW-1;i++) arr[i]=(arr[i]*2+arr[i-1]+arr[i+1])/4; } }
+  const totals=new Float64Array(NW);
+  for (const arr of bins.values()) for(let i=0;i<NW;i++) totals[i]+=arr[i];
+  const peak=Math.max(...totals,1);
+  const padL=8,padR=8,padT=24,padB=28; const iw=w-padL-padR, ih=h-padT-padB;
+  const X=i=> padL + (NW<=1?iw/2: i/(NW-1)*iw);
+  const scaleY=v=> v/peak*ih;
+  // stack centered (streamgraph wiggle = center baseline)
+  const offset=new Float64Array(NW);
+  for(let i=0;i<NW;i++) offset[i]=(ih-scaleY(totals[i]))/2;
+  const order=top; let acc=offset.slice();
+  const g=document.createElementNS(SVGNS,'g');
+  for (const t of order){
+    const arr=bins.get(t.id); const upper=[],lower=[];
+    for(let i=0;i<NW;i++){ const y0=padT+acc[i], y1=padT+acc[i]+scaleY(arr[i]); upper.push([X(i),y0]); lower.push([X(i),y1]); acc[i]+=scaleY(arr[i]); }
+    const pts=upper.concat(lower.reverse());
+    const path=document.createElementNS(SVGNS,'path');
+    path.setAttribute('d','M'+pts.map(p=>p[0].toFixed(1)+','+p[1].toFixed(1)).join('L')+'Z');
+    path.setAttribute('fill',PC[t.domProject]||'#5ec8f8');
+    path.setAttribute('fill-opacity', selected===t.id?'0.95':'0.62');
+    path.setAttribute('stroke','#0b0e14'); path.setAttribute('stroke-width','0.6');
+    path.style.cursor='pointer';
+    path.addEventListener('click',()=>selectThread(t.id));
+    path.addEventListener('mousemove',ev=>{ const tip=document.getElementById('tip'); const r=svg.getBoundingClientRect();
+      tip.style.display='block'; tip.style.left=(ev.clientX-r.left+12)+'px'; tip.style.top=(ev.clientY-r.top+12)+'px'; tip.textContent=t.label; });
+    path.addEventListener('mouseleave',()=>document.getElementById('tip').style.display='none');
+    g.appendChild(path);
+  }
+  svg.appendChild(g);
+  // time axis labels (months)
+  const ax=document.createElementNS(SVGNS,'g');
+  for(let i=0;i<NW;i+=4){ const d=new Date(DMIN+i*WEEK); const tx=document.createElementNS(SVGNS,'text');
+    tx.setAttribute('x',X(i)); tx.setAttribute('y',h-10); tx.setAttribute('fill','#6b7686'); tx.setAttribute('font-size','10'); tx.setAttribute('text-anchor','middle');
+    tx.textContent=d.toLocaleDateString('en',{month:'short',day:'numeric'}); ax.appendChild(tx); }
+  svg.appendChild(ax);
+}
+
+// ================= VIEW 3: TIMELINE + RETURN ARCS (SVG) =================
+function renderArcs(){
+  const svg=document.getElementById('arcs'); const w=svg.clientWidth, h=svg.clientHeight;
+  svg.setAttribute('viewBox',`0 0 ${w} ${h}`); svg.innerHTML='';
+  const lanes=[...T].sort((a,b)=>b.ex-a.ex).slice(0,16).sort((a,b)=>(a.first||'').localeCompare(b.first||''));
+  const padL=150,padR=20,padT=18,padB=28; const iw=w-padL-padR, ih=h-padT-padB;
+  const X=ts=> clampX(padL + (DMAX===DMIN?iw/2:(tsToDay(ts)-DMIN)/(DMAX-DMIN)*iw), padL, w-padR);
+  const laneY=k=> padT + (lanes.length<=1?ih/2: k/(lanes.length-1)*ih);
+  lanes.forEach((t,k)=>{
+    const y=laneY(k), col=PC[t.domProject]||'#5ec8f8';
+    // lane label
+    const lb=document.createElementNS(SVGNS,'text'); lb.setAttribute('x',padL-10); lb.setAttribute('y',y+3);
+    lb.setAttribute('fill',selected===t.id?'#fff':'#9fb0c4'); lb.setAttribute('font-size','11'); lb.setAttribute('text-anchor','end');
+    lb.textContent=t.label.split(' · ').slice(0,2).join(' · '); lb.style.cursor='pointer';
+    lb.addEventListener('click',()=>selectThread(t.id)); svg.appendChild(lb);
+    // baseline
+    const base=document.createElementNS(SVGNS,'line'); base.setAttribute('x1',padL); base.setAttribute('x2',w-padR);
+    base.setAttribute('y1',y); base.setAttribute('y2',y); base.setAttribute('stroke','#1d2430'); svg.appendChild(base);
+    const segs=segsOf(t.id);
+    // return arcs between consecutive segments
+    for(let i=1;i<segs.length;i++){
+      const x1=X(segs[i-1].ts), x2=X(segs[i].ts); if(x2-x1<2) continue;
+      const arc=document.createElementNS(SVGNS,'path'); const lift=Math.min(34, 8+(x2-x1)*0.12);
+      arc.setAttribute('d',`M${x1},${y} Q${(x1+x2)/2},${y-lift} ${x2},${y}`);
+      arc.setAttribute('fill','none'); arc.setAttribute('stroke',col); arc.setAttribute('stroke-opacity','0.35'); arc.setAttribute('stroke-width','1');
+      svg.appendChild(arc);
+    }
+    // segment dots
+    for(const s of segs){
+      const c=document.createElementNS(SVGNS,'circle'); c.setAttribute('cx',X(s.ts)); c.setAttribute('cy',y);
+      c.setAttribute('r',Math.max(2,Math.min(7,Math.sqrt(s.ex)))); c.setAttribute('fill',col);
+      c.setAttribute('fill-opacity',selected===t.id?'1':'0.8'); c.style.cursor='pointer';
+      c.addEventListener('click',()=>selectThread(t.id));
+      c.addEventListener('mousemove',ev=>{ const tip=document.getElementById('tip'); const r=svg.getBoundingClientRect();
+        tip.style.display='block'; tip.style.left=(ev.clientX-r.left+12)+'px'; tip.style.top=(ev.clientY-r.top+12)+'px';
+        tip.textContent=`${(s.ts||'').slice(0,10)} · ${s.ex}ex · ${(s.s||'').slice(0,60)}`; });
+      c.addEventListener('mouseleave',()=>document.getElementById('tip').style.display='none');
+      svg.appendChild(c);
+    }
+  });
+  // month gridlines
+  for(let d=DMIN; d<=DMAX; d+=WEEK*4){ const x=X(new Date(d).toISOString());
+    const gl=document.createElementNS(SVGNS,'line'); gl.setAttribute('x1',x);gl.setAttribute('x2',x);gl.setAttribute('y1',padT-6);gl.setAttribute('y2',h-padB+4);
+    gl.setAttribute('stroke','#141a24'); svg.appendChild(gl);
+    const tx=document.createElementNS(SVGNS,'text'); tx.setAttribute('x',x);tx.setAttribute('y',h-10);tx.setAttribute('fill','#6b7686');tx.setAttribute('font-size','10');tx.setAttribute('text-anchor','middle');
+    tx.textContent=new Date(d).toLocaleDateString('en',{month:'short',day:'numeric'}); svg.appendChild(tx); }
+}
+
+// ---------- view switching ----------
+let state='graph';
+const hints={graph:'тяга = смысловая близость · кольцо = высокая фрагментация · клик = нырнуть',
+  river:'толщина ленты = активность темы по неделям · клик = нырнуть',
+  arcs:'дуга назад = возврат к теме · густо = тема дёргала · клик = нырнуть'};
+function setView(v){
+  state=v; rafOn=false;
+  document.querySelectorAll('.views button').forEach(b=>b.classList.toggle('active',b.dataset.v===v));
+  graph.classList.toggle('hidden',v!=='graph');
+  document.getElementById('river').classList.toggle('hidden',v!=='river');
+  document.getElementById('arcs').classList.toggle('hidden',v!=='arcs');
+  document.getElementById('legend').classList.toggle('hidden', false);
+  document.getElementById('hint').textContent=hints[v];
+  if(v==='graph'){ sizeCanvas(); rafOn=true; loop(); }
+  else if(v==='river') renderRiver();
+  else renderArcs();
+}
+document.querySelectorAll('.views button').forEach(b=>b.addEventListener('click',()=>setView(b.dataset.v)));
+window.addEventListener('resize',()=>{ if(state==='graph'){sizeCanvas();drawGraph();} else if(state==='river')renderRiver(); else renderArcs(); });
+
+initGraph(); sizeCanvas(); setView('graph');
+</script>
+</body>
+</html>
