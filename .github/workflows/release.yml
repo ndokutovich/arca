@@ -82,7 +82,19 @@ jobs:
       # instead of leaving the scope/permission question open.
       - name: Identify the token
         run: |
-          echo "authenticated as: $(npm whoami)"
+          # Shape only - length and prefix class. GitHub masks the value itself,
+          # and a token pasted with a trailing newline or truncated mid-copy is
+          # indistinguishable from a revoked one until you look at its length.
+          LEN=${#NODE_AUTH_TOKEN}
+          case "$NODE_AUTH_TOKEN" in
+            npm_*)  SHAPE="npm_ (automation or granular)" ;;
+            "")     SHAPE="EMPTY - the secret did not reach this step" ;;
+            *)      SHAPE="legacy/unknown prefix" ;;
+          esac
+          echo "token length: $LEN"
+          echo "token shape:  $SHAPE"
+          printf '%s' "$NODE_AUTH_TOKEN" | grep -q '[[:space:]]' && echo "WARNING: token contains whitespace - it was pasted with a newline or space"
+          echo "authenticated as: $(npm whoami || echo '<rejected>')"
           echo "publishing as:    $(node -p "require('./package.json').name")"
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
