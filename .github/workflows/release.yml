@@ -1,0 +1,95 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Tag to release, e.g. v0.1.0"
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: validate tag
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      dist_tag: ${{ steps.v.outputs.dist_tag }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+
+      # The git tag is the single source of truth for the release version.
+      # Abort before anything is published if it is malformed or package.json
+      # has drifted from it.
+      - id: v
+        name: Validate version and resolve dist-tag
+        run: |
+          REF="${{ github.event.inputs.ref || github.ref_name }}"
+          VERSION="$(bash .github/scripts/validate-release-version.sh "$REF")"
+          DIST_TAG="$(bash .github/scripts/npm-dist-tag.sh "$REF")"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "dist_tag=$DIST_TAG" >> "$GITHUB_OUTPUT"
+          echo "releasing $VERSION under dist-tag $DIST_TAG"
+
+  test:
+    name: test before publish
+    needs: validate
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: true
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - run: npm ci
+      - run: npm test
+      - name: Native modules load
+        run: node -e "import('./lib/db.js').then(() => console.log('ok'))"
+
+  publish:
+    name: npm publish
+    needs: [validate, test]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+          registry-url: "https://registry.npmjs.org"
+
+      - run: npm ci
+
+      - name: Publish
+        # No --provenance: npm/sigstore provenance requires a PUBLIC source
+        # repository, and this one is private (it returns 422 "Unsupported
+        # GitHub Actions source repository visibility: private"). Consumers
+        # therefore cannot rely on `npm audit signatures` for these packages.
+        # Add --provenance the day the repository goes public.
+        #
+        # --access public is required: a scoped package defaults to restricted,
+        # and a restricted publish on a free account fails outright.
+        run: npm publish --access public --tag "${{ needs.validate.outputs.dist_tag }}"
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Summary
+        run: |
+          echo "### Published @ndokutovich/arca@${{ needs.validate.outputs.version }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "dist-tag: \`${{ needs.validate.outputs.dist_tag }}\`" >> "$GITHUB_STEP_SUMMARY"
