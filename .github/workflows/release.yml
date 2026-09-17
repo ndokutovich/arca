@@ -76,6 +76,17 @@ jobs:
 
       - run: npm ci
 
+      # npm answers a failed publish with 404 on PUT, which reads as "package
+      # not found" but means "not authenticated, or not allowed to publish into
+      # this scope". Ask the token who it is first, so the log names the account
+      # instead of leaving the scope/permission question open.
+      - name: Identify the token
+        run: |
+          echo "authenticated as: $(npm whoami)"
+          echo "publishing as:    $(node -p "require('./package.json').name")"
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
       - name: Publish
         # No --provenance: npm/sigstore provenance requires a PUBLIC source
         # repository, and this one is private (it returns 422 "Unsupported
