@@ -1,6 +1,6 @@
 {
   "name": "@ndokutovich/arca",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "A vault for everything Claude Code throws away: session transcripts kept in git and indexed — hybrid search, cross-session topic threads, cross-project entities, and a temporal knowledge graph.",
   "type": "module",
   "main": "mcp-server.js",
@@ -13,7 +13,9 @@
     "test": "node --test",
     "serve": "node mcp-server.js",
     "threads:map": "node build-thread-map.js",
-    "import:claude-ai": "node import-claude-ai.js"
+    "import:claude-ai": "node import-claude-ai.js",
+    "restore": "node cli.js restore",
+    "install:claude": "node cli.js install"
   },
   "dependencies": {
     "@huggingface/transformers": "^3.4.1",
@@ -49,9 +51,22 @@
     "agent/",
     "command/",
     "skill/",
-    "*.js",
+    "cli.js",
+    "mcp-server.js",
+    "indexer.js",
+    "index-incremental.js",
+    "backfill.js",
+    "import-claude-ai.js",
+    "build-entities.js",
+    "build-kg.js",
+    "build-threads.js",
+    "build-thread-map.js",
     "thread-map.template.html",
     "README.md",
-    "LICENSE"
-  ]
+    "LICENSE",
+    "!lib/*.test.js"
+  ],
+  "bin": {
+    "arca": "cli.js"
+  }
 }

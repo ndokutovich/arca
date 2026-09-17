@@ -37,8 +37,7 @@ cd arca
 npm install
 ```
 
-**First run downloads an embedding model** (`@huggingface/transformers`, a few hundred
-MB) into its own cache. It happens once, it takes a while, and nothing works until it
+**First run downloads an embedding model** (`@huggingface/transformers`, about 80 MB) into its own cache. It happens once, it takes a while, and nothing works until it
 finishes.
 
 **The native modules are the fragile part.** `better-sqlite3` and `sqlite-vec` compile
@@ -56,14 +55,55 @@ node build-kg.js             # rebuild the knowledge graph
 node build-threads.js        # rebuild topic threads
 node build-thread-map.js     # render threads to an interactive thread-map.html
 node cli.js search "query"   # search from the shell
+node cli.js restore          # sessions Claude Code no longer has
+node cli.js install          # register with Claude Code
 ```
 
 Run the three `build-*` scripts **in that order and one at a time** — they each rewrite
 whole tables, and running them against a live indexer will collide on the write lock.
 
+## Restore a session Claude Code lost
+
+This is the part nothing else does.
+
+`~/.claude/projects/` is not permanent. Sessions vanish from it — cleanup, a
+reinstall, a new machine — and once they are gone `claude --resume` cannot offer
+them. The vault still has them. On the corpus this was built against, **four out
+of five archived sessions exist only in the vault**.
+
+```bash
+arca restore                 # what the vault has and Claude Code does not
+arca restore <session-id>    # put one back where Claude Code reads it
+```
+
+A restore copies the transcript, byte for byte, into
+`~/.claude/projects/<project>/<id>.jsonl`. Nothing is rewritten. The session
+reappears in `claude --resume` for that project and the work continues where it
+stopped.
+
+Two things it is careful about. It will not overwrite a live transcript without
+`--force`, because the live copy may hold turns the archive never saw. And it
+reports the file size, because the resume parser struggles past ~50 MB — for a
+transcript that large, fork it from its last compact boundary instead.
+
+Conversations imported from claude.ai are left out of the listing: they index and
+search like everything else, but they were never Claude Code sessions, so
+offering to resume one would be offering something that never existed. Name one
+explicitly if you want it back anyway.
+
 ## Wire it up
 
-Two pieces, both optional on their own.
+```bash
+arca install             # register the hook, the MCP server, the skills
+arca install --dry-run   # show what it would change, write nothing
+```
+
+The installer merges: it adds only its own entries, backs up
+`~/.claude/settings.json` and `~/.claude.json` before touching either, and does
+nothing the second time. It never rewrites those files wholesale — they hold
+your permissions, environment and every other hook.
+
+If you would rather wire it by hand, the two pieces are these.
 
 **The hook** keeps the archive current. `hooks/session-vault.js` runs on `SessionStart`:
 it copies new and changed session files into `~/.claude-vault/`, commits them, and kicks
@@ -101,6 +141,23 @@ threads, observations. In `~/.claude.json`:
 
 `skill/SKILL.md` and `agent/search-conversations.md` are installable Claude Code
 surfaces for the same thing, if you prefer a skill over an MCP server.
+
+## Your own names
+
+The entity layer ships with a generic list of tools and technologies. Your own
+projects, tools and people go in `~/.claude-vault/gazetteer.json`:
+
+```json
+{ "peon-ping": "tool", "hexcrawl": "concept", "ada": "person" }
+```
+
+Types are `tech`, `tool`, `person`, `concept`. Entries live in your vault, not in
+the package, so upgrades never clobber them. Set `ARCA_GAZETTEER` to keep the
+file somewhere else.
+
+One caution: an entry qualifies an entity on a single mention. A distinctive
+name earns its place; a common word like `carrier` will tag every ordinary use of
+it across your whole corpus.
 
 ## Where things live
 
