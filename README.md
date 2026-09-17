@@ -29,7 +29,7 @@ Plus a small temporal knowledge graph (`x runs_on_port 3001` *since* a date), so
 
 ## Install
 
-Requires Node 18+ and a C toolchain for the native modules.
+Requires Node 20+ and a C toolchain for the native modules.
 
 ```bash
 git clone https://github.com/ndokutovich/arca.git

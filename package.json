@@ -39,5 +39,19 @@
   "bugs": {
     "url": "https://github.com/ndokutovich/arca/issues"
   },
-  "homepage": "https://github.com/ndokutovich/arca#readme"
+  "homepage": "https://github.com/ndokutovich/arca#readme",
+  "engines": {
+    "node": ">=20"
+  },
+  "files": [
+    "lib/",
+    "hooks/",
+    "agent/",
+    "command/",
+    "skill/",
+    "*.js",
+    "thread-map.template.html",
+    "README.md",
+    "LICENSE"
+  ]
 }
