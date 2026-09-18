@@ -63,6 +63,11 @@
 const DATA = /*__DATA__*/ null;
 const SVGNS = "http://www.w3.org/2000/svg";
 const T = DATA.threads, E = DATA.edges, SEG = DATA.segments, PC = DATA.projectColors;
+// Thread labels, project names and summaries are transcript-derived: they are
+// whatever was typed or generated, so nothing goes into markup unescaped.
+const esc = (v) => String(v == null ? '' : v)
+  .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+  .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 const byId = Object.fromEntries(T.map(t => [t.id, t]));
 const shortP = p => p.replace(/^w---proj--own--/,'').replace(/^w---proj--/,'').replace(/^C---init-w--proj--own--/,'').replace(/claude-code-advanced--/,'').replace(/ideator-?-?/,'');
 const segsOf = id => SEG.filter(s => s.t === id).sort((a,b)=> (a.ts||'').localeCompare(b.ts||''));
@@ -76,14 +81,14 @@ function selectThread(id) {
   panel.classList.remove('empty');
   const segs = segsOf(id);
   panel.innerHTML =
-    `<h2>${t.label}</h2>
+    `<h2>${esc(t.label)}</h2>
      <div class="meta">${t.ex} exchanges · ${t.sess} sessions · ${t.proj} projects · ⤺${t.ret} returns<br>
       ${(t.first||'').slice(0,10)} → ${(t.last||'').slice(0,10)}</div>
-     <div class="chips">${(t.projects||[]).map(p=>`<span class="chip" style="border-color:${PC[p]||'#333'}">${shortP(p)}</span>`).join('')}</div>
+     <div class="chips">${(t.projects||[]).map(p=>`<span class="chip" style="border-color:${esc(PC[p]||'#333')}">${esc(shortP(p))}</span>`).join('')}</div>
      <div style="color:var(--dim);font-size:11px;margin-bottom:6px">CHRONOLOGY — ${segs.length} segments</div>` +
     segs.map(s=>`<div class="seg"><span class="d">${(s.ts||'').slice(0,10)}</span>
-       <span class="p"> · ${shortP(s.p)} · ${s.ex}ex</span>
-       <div class="s">${(s.s||'').replace(/</g,'&lt;')}</div></div>`).join('');
+       <span class="p"> · ${esc(shortP(s.p))} · ${esc(s.ex)}ex</span>
+       <div class="s">${esc(s.s)}</div></div>`).join('');
   renderGraph(); // refresh highlight if visible
 }
 
@@ -92,7 +97,7 @@ function selectThread(id) {
   const counts = {}; for (const s of SEG) counts[s.p]=(counts[s.p]||0)+s.ex;
   const top = Object.entries(counts).sort((a,b)=>b[1]-a[1]).slice(0,12);
   document.getElementById('legend').innerHTML =
-    top.map(([p])=>`<span><i style="background:${PC[p]||'#555'}"></i>${shortP(p)}</span>`).join('');
+    top.map(([p])=>`<span><i style="background:${esc(PC[p]||'#555')}"></i>${esc(shortP(p))}</span>`).join('');
 })();
 
 // ================= VIEW 1: CONSTELLATION (force graph on canvas) =================

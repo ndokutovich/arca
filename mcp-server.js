@@ -422,8 +422,13 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       // the caller's input. Both roots are legitimate: search returns archive
       // paths, and a live session under ~/.claude/projects is the same kind of
       // file. Anything else is refused by name rather than silently emptied.
-      const resolved = nodePath.resolve(filePath);
-      const roots = [vaultDir(), projectsDir()].map((r) => nodePath.resolve(r));
+      // realpath, not resolve: resolve is lexical and happily walks through a
+      // symlink planted inside either root, which would turn confinement into
+      // decoration. Roots are canonicalised too, or a symlinked home defeats it
+      // from the other side.
+      const canon = (p) => { try { return fs.realpathSync.native(p); } catch { return nodePath.resolve(p); } };
+      const resolved = canon(nodePath.resolve(filePath));
+      const roots = [vaultDir(), projectsDir()].map(canon);
       const inside = roots.some(
         (root) => resolved === root || resolved.startsWith(root + nodePath.sep)
       );

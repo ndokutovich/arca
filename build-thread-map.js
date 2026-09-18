@@ -84,7 +84,14 @@ function main() {
 
   const data = { threads, edges, segments, projectColors };
   const tpl = fs.readFileSync(path.join(__dirname, 'thread-map.template.html'), 'utf8');
-  const html = tpl.replace('/*__DATA__*/ null', JSON.stringify(data));
+  // A summary containing </script> would otherwise close the tag it is being
+  // embedded in, and JSON leaves U+2028/2029 raw where JavaScript treats them
+  // as line terminators. Escaping all three is the price of JSON inside HTML.
+  const safeJson = JSON.stringify(data)
+    .replace(/</g, '\\u003c')
+    .replace(new RegExp(String.fromCharCode(0x2028), 'g'), '\\u2028')
+    .replace(new RegExp(String.fromCharCode(0x2029), 'g'), '\\u2029');
+  const html = tpl.replace('/*__DATA__*/ null', safeJson);
   const out = path.join(__dirname, 'thread-map.html');
   fs.writeFileSync(out, html);
 

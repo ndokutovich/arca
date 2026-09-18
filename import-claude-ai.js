@@ -123,10 +123,24 @@ function messageText(m) {
   return '';
 }
 
+// Ids come from an export file, so they are untrusted input that ends up as a
+// path component. An id of "../../evil" would otherwise write outside the vault
+// entirely, and a missing one collapses every conversation into undefined.jsonl.
+const UUIDISH = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
+
+function safeId(id) {
+  const s = typeof id === 'string' ? id.trim() : '';
+  return UUIDISH.test(s) && !s.includes('..') ? s : null;
+}
+
 function writeConversation(destDir, id, rows, stats, dryRun) {
   if (!rows.length) { stats.empty++; return; }
+  const safe = safeId(id);
+  if (!safe) { stats.unreadable++; return; }
   const body = rows.join(NL) + NL;
-  const file = path.join(destDir, id + '.jsonl');
+  const file = path.join(destDir, safe + '.jsonl');
+  // Belt and braces: even a regex-clean id must land where we meant it to.
+  if (path.relative(destDir, file).includes('..')) { stats.unreadable++; return; }
   try {
     if (fs.readFileSync(file, 'utf8') === body) { stats.unchanged++; return; }
     stats.updated++;
@@ -135,7 +149,15 @@ function writeConversation(destDir, id, rows, stats, dryRun) {
   }
   if (dryRun) return;
   fs.mkdirSync(destDir, { recursive: true });
-  fs.writeFileSync(file, body);
+  // An interrupted overwrite would replace a good archive with a truncated one.
+  const tmp = `${file}.tmp-${process.pid}`;
+  try {
+    fs.writeFileSync(tmp, body);
+    fs.renameSync(tmp, file);
+  } catch (e) {
+    try { fs.unlinkSync(tmp); } catch { /* nothing to clean */ }
+    throw e;
+  }
 }
 
 function importConversations(file, stats, dryRun) {
