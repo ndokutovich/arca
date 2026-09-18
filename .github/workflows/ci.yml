@@ -51,8 +51,7 @@ jobs:
           node-version: "22"
 
       # The tree is clean, so the gate is strict. The advisories that once forced
-      # leniency here lived under @huggingface/transformers 3.x and went with the
-      # 4.x upgrade — which, measured against the previous version, produces
-      # bit-identical vectors, so nothing had to be re-indexed for it.
+      # leniency here lived under the transformers.js stack, which this no longer
+      # depends on.
       - name: Audit
         run: npm audit --audit-level=high

@@ -19,8 +19,8 @@
     "resurrect": "node cli.js resurrect"
   },
   "dependencies": {
-    "@huggingface/transformers": "^4.3.0",
     "@modelcontextprotocol/sdk": "^1.30.0",
+    "onnxruntime-node": "^1.30.0",
     "sqlite-vec": "^0.1.9"
   },
   "license": "MIT",

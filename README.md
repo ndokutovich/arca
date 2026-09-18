@@ -38,15 +38,16 @@ cd arca
 npm install
 ```
 
-**First run downloads an embedding model** (`@huggingface/transformers`, about 80 MB) into its own cache. It happens once, it takes a while, and nothing works until it
-finishes.
+Three dependencies. `npm install` pulls about 315 MB, nearly all of it the
+ONNX runtime, which ships every platform's binaries in one package.
 
-**Nothing here compiles.** SQLite is Node's own `node:sqlite`, and `sqlite-vec`
-and the ONNX runtime both ship prebuilt binaries. This used to depend on
-`better-sqlite3`, whose prebuilt binary is linked against glibc 2.34 — newer
-than a lot of ARM single-board systems ship, and the failure was an unreadable
-loader error deep inside a dependency. The extension that replaced it needs
-glibc 2.17.
+**First run downloads the embedding model** — all-MiniLM-L6-v2, about 90 MB,
+into `~/.claude-vault/models/`. It happens once, the files are checksum-pinned,
+and nothing works until it finishes. It sits with the rest of the vault rather
+than inside `node_modules`, so upgrading arca does not throw it away.
+
+**Nothing here compiles.** SQLite is Node's own `node:sqlite`; `sqlite-vec` and
+the ONNX runtime ship prebuilt binaries. No node-gyp, no Python, no toolchain.
 
 ## Use
 
@@ -189,25 +190,26 @@ yet either. Another language needs its own patterns in `lib/control.js` and
 
 ## Platforms, and the ARM footnote
 
-All three native pieces ship binaries for linux-arm64 — `better-sqlite3`,
-`sqlite-vec` and the ONNX runtime behind the embeddings — so a Raspberry Pi,
-an OrangePi or an ARM server is a supported target, not a curiosity.
+Both native pieces — `sqlite-vec` and the ONNX runtime behind the embeddings —
+ship linux-arm64 binaries, so a Raspberry Pi, an OrangePi or an ARM server is a
+supported target rather than a curiosity.
 
-What trips it up is glibc, not the architecture. The prebuilt
-`better-sqlite3` binary is linked against **glibc 2.34**, so a device running
-something older fails at load with `GLIBC_2.33 not found` or similar. Debian 12
-(2.36) and Ubuntu 22.04 (2.35) are fine; Debian 11 and Ubuntu 20.04 (both 2.31)
-are not.
+What trips it up is glibc, not the architecture. The floor, read off the
+shipped binaries rather than off a changelog:
 
-On an older system, build that one module against the glibc you actually have:
+| binary | needs |
+|---|---|
+| `sqlite-vec` `vec0.so` | glibc 2.17 |
+| `onnxruntime_binding.node` | glibc 2.17 on arm64, 2.14 on x64 |
+| `libonnxruntime.so.1` | **glibc 2.28** |
 
-```bash
-sudo apt install -y build-essential python3
-cd node_modules/better-sqlite3 && npm run build-release
-```
+So 2.28 — Debian 10, Ubuntu 18.10, anything from 2019 on. Armbian's Debian 11
+and 12 images clear it comfortably.
 
-`build-release` is the package's own escape hatch and forces a source build
-past the bundled binary. Expect several minutes — it compiles SQLite.
+It used to be 2.34, and the failure was an unreadable loader error deep inside
+a dependency. `better-sqlite3` wanted that, and `@huggingface/transformers`
+brought an image-processing library that loaded a native binary on every
+embedding — of text. Both are gone.
 
 One honest expectation: embeddings run on the CPU through ONNX, and a
 single-board computer will index at a fraction of a laptop's pace. Search,
