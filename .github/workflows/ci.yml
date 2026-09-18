@@ -19,7 +19,8 @@ jobs:
         # The native modules (better-sqlite3, sqlite-vec) are the fragile part,
         # so build them everywhere rather than trusting one platform.
         os: [ubuntu-latest, macos-latest, windows-latest]
-        node: ["20", "22"]
+        # Node 20 went end-of-life 2026-04-30; better-sqlite3 13 requires 22+.
+        node: ["22", "24"]
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
@@ -49,9 +50,9 @@ jobs:
         with:
           node-version: "22"
 
-      # Two high-severity advisories sit in @huggingface/transformers' tree and
-      # are only cleared by its 4.x major. That bump changes the embedding
-      # library that produced every vector already in a user's database, so it
-      # is a deliberate migration, not a patch. Fail on critical only until then.
-      - name: Audit (critical)
-        run: npm audit --audit-level=critical
+      # The tree is clean, so the gate is strict. The advisories that once forced
+      # leniency here lived under @huggingface/transformers 3.x and went with the
+      # 4.x upgrade — which, measured against the previous version, produces
+      # bit-identical vectors, so nothing had to be re-indexed for it.
+      - name: Audit
+        run: npm audit --audit-level=high
