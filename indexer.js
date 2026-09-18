@@ -18,7 +18,7 @@ import fs from 'fs';
 import path from 'path';
 import os from 'os';
 import { parseTranscript } from './lib/parser.js';
-import { getDb, closeDb, getIndexedIds, upsertExchange, deleteByArchive, upsertEssence } from './lib/db.js';
+import { getDb, closeDb, getIndexedIds, upsertExchange, deleteByArchive, upsertEssence, listIndexedArchives } from './lib/db.js';
 import { embedExchange, initEmbeddings } from './lib/embeddings.js';
 import { extractExchangeEssence } from './lib/essence.js';
 
@@ -46,13 +46,16 @@ function findJsonlFiles(dir) {
 
 async function indexFile(filePath, project, fullReindex = false) {
   const exchanges = await parseTranscript(filePath, project);
-  if (exchanges.length === 0) return { indexed: 0, skipped: 0 };
 
+  // Clear before the empty check, not after it. A transcript that became empty
+  // or unparseable returned early and kept every exchange it used to have,
+  // which is exactly the case --full exists to correct.
   const existingIds = fullReindex ? new Set() : getIndexedIds(filePath);
-
   if (fullReindex) {
     deleteByArchive(filePath);
   }
+
+  if (exchanges.length === 0) return { indexed: 0, skipped: 0 };
 
   let indexed = 0;
   let skipped = 0;
@@ -120,6 +123,14 @@ async function main() {
         log(`  [${i + 1}/${files.length}] ${project}: +${indexed} exchanges`);
       }
     }
+
+    // A file deleted from the archive was never visited again, so its exchanges
+    // stayed searchable forever — a full reindex that only ever adds is not a
+    // reconciliation. Drop what the scan no longer sees.
+    const onDisk = new Set(files.map((f) => f.path));
+    const stale = listIndexedArchives().filter((p) => !onDisk.has(p));
+    for (const p of stale) deleteByArchive(p);
+    if (stale.length) log(`Removed ${stale.length} archive(s) no longer on disk`);
   }
 
   closeDb();
