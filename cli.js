@@ -1,223 +1,486 @@
 #!/usr/bin/env node
-/**
- * arca CLI — search and read past sessions.
- *
- * Usage:
- *   node cli.js search "query"                    # hybrid search
- *   node cli.js search "query" --mode vector      # vector only
- *   node cli.js search "query" --limit 5          # limit results
- *   node cli.js search "query" --after 2026-03-01 # date filter
- *   node cli.js search "query" --project ai-cl    # project filter
- *   node cli.js search "q1" "q2" "q3"             # multi-concept AND
- *   node cli.js read <path> [startLine] [endLine]  # read conversation
- *   node cli.js stats                              # index stats
- *   node cli.js restore                            # sessions Claude Code lost
- *   node cli.js restore <id>                       # put one back
- *   node cli.js install [--dry-run]                # register hook, MCP, skills
- *   node cli.js index [--full]                     # index new exchanges
- *   node cli.js import <export-dir> [--dry-run]    # fold in a claude.ai export
- *   node cli.js resurrect                          # transcripts resume cannot open
- *   node cli.js resurrect <id> [--dry-run]         # fork one from its last compact
- */
-
-import { listRestorable, restoreSession } from './lib/restore.js';
-import { install } from './lib/install.js';
-import { diagnose, forkSession } from './lib/resurrect.js';
-import { runImport } from './import-claude-ai.js';
+// arca — the command line over the vault.
+//
+// The usage text used to live in a comment at the top of this file, which no
+// program has ever shown anyone. Commands were an if/else chain, so an unknown
+// one printed a bare list, a misspelled flag was accepted and ignored, and
+// there was no --help and no --version. Everything a person needs to find
+// their way around now comes out of the same table the dispatcher reads, which
+// is the only arrangement where help and behaviour cannot drift apart.
 import { spawnSync } from 'child_process';
 import { fileURLToPath } from 'url';
 import nodePath from 'path';
 import fs from 'fs';
 
-// The index pulls in native modules (better-sqlite3, sqlite-vec). `restore` and
-// `install` are exactly what someone runs when those failed to build, so they
-// must not import them. Everything index-backed loads on demand instead.
+// The index pulls in native modules. `restore`, `install` and `resurrect` are
+// exactly what someone runs when the index is broken or absent, so they must
+// not import them. Everything index-backed loads on demand instead.
 const lazy = {
   search: () => import('./lib/search.js'),
   show: () => import('./lib/show.js'),
   db: () => import('./lib/db.js'),
+  restore: () => import('./lib/restore.js'),
+  install: () => import('./lib/install.js'),
+  resurrect: () => import('./lib/resurrect.js'),
+  importer: () => import('./import-claude-ai.js'),
 };
+
+const HERE = nodePath.dirname(fileURLToPath(import.meta.url));
 let dbModule = null;
 
-const args = process.argv.slice(2);
-const cmd = args[0];
+function version() {
+  try {
+    return JSON.parse(fs.readFileSync(nodePath.join(HERE, 'package.json'), 'utf8')).version;
+  } catch {
+    return 'unknown';
+  }
+}
 
-// Flags that stand alone. Without this list a bare `--include-imported` was
-// taken as a positional argument and looked up as a session id, and a boolean
-// placed before another option swallowed that option's value.
-const BOOLEAN_FLAGS = new Set([
-  'dry-run', 'force', 'all', 'include-imported', 'keep-temp', 'no-seed', 'full', 'quiet',
-]);
+function human(bytes) {
+  if (bytes >= 1073741824) return `${(bytes / 1073741824).toFixed(1)} GB`;
+  if (bytes >= 1048576) return `${(bytes / 1048576).toFixed(1)} MB`;
+  return `${(bytes / 1024).toFixed(0)} KB`;
+}
 
-function parseFlags(args) {
+// A usage mistake is not a crash. Exit 2 keeps the two apart for anything
+// driving arca from a script.
+class UsageError extends Error {}
+
+function fail(msg) { throw new UsageError(msg); }
+
+function distance(a, b) {
+  const d = Array.from({ length: a.length + 1 }, (_, i) => [i, ...Array(b.length).fill(0)]);
+  for (let j = 0; j <= b.length; j++) d[0][j] = j;
+  for (let i = 1; i <= a.length; i++) {
+    for (let j = 1; j <= b.length; j++) {
+      d[i][j] = Math.min(
+        d[i - 1][j] + 1,
+        d[i][j - 1] + 1,
+        d[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1),
+      );
+    }
+  }
+  return d[a.length][b.length];
+}
+
+function nearest(word, candidates) {
+  return candidates
+    .map((c) => [c, distance(word, c)])
+    .filter(([, d]) => d <= Math.max(2, Math.floor(word.length / 3)))
+    .sort((x, y) => x[1] - y[1])[0]?.[0];
+}
+
+// --- flags -----------------------------------------------------------------
+//
+// Each command declares its own. A flag the command does not take is an error
+// rather than something silently dropped, and a boolean is known to be one, so
+// `--dry-run --project x` no longer swallows `--project` as a value.
+
+function parse(spec, argv) {
   const flags = {};
   const positional = [];
-  for (let i = 0; i < args.length; i++) {
-    const a = args[i];
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i];
+    if (a === '--') { positional.push(...argv.slice(i + 1)); break; }
     if (!a.startsWith('--')) { positional.push(a); continue; }
-    const name = a.slice(2);
-    if (BOOLEAN_FLAGS.has(name)) { flags[name] = true; continue; }
-    if (i + 1 < args.length && !args[i + 1].startsWith('--')) { flags[name] = args[++i]; continue; }
-    flags[name] = true;
+
+    const eq = a.indexOf('=');
+    const name = eq === -1 ? a.slice(2) : a.slice(2, eq);
+    const inline = eq === -1 ? null : a.slice(eq + 1);
+    const def = spec[name];
+    if (!def) {
+      const guess = nearest(name, Object.keys(spec));
+      fail(`unknown option --${name}${guess ? ` (did you mean --${guess}?)` : ''}`);
+    }
+    if (def.boolean) {
+      if (inline !== null) fail(`--${name} takes no value`);
+      flags[name] = true;
+      continue;
+    }
+    if (inline !== null) { flags[name] = inline; continue; }
+    if (i + 1 >= argv.length || argv[i + 1].startsWith('--')) fail(`--${name} needs a value`);
+    flags[name] = argv[++i];
   }
   return { flags, positional };
 }
 
-await (async () => {
-try {
-  if (cmd === 'search') {
-    const { flags, positional } = parseFlags(args.slice(1));
-    const queries = positional;
+function num(value, name) {
+  if (value === undefined) return undefined;
+  const n = Number(value);
+  if (!Number.isInteger(n) || n < 0) fail(`--${name} wants a whole number, got "${value}"`);
+  return n;
+}
 
-    if (queries.length === 0) {
-      console.error('Usage: node cli.js search "query" [--mode both] [--limit 10] [--after YYYY-MM-DD] [--before YYYY-MM-DD] [--project name]');
-      process.exit(1);
-    }
+// Shared flag shapes, so the same option reads the same way everywhere.
+const F = {
+  project: { value: 'NAME', describe: 'only this project' },
+  limit: { value: 'N', describe: 'how many to show' },
+  dryRun: { boolean: true, describe: 'show what would happen, write nothing' },
+};
 
-    const opts = {
-      mode: flags.mode || 'both',
-      limit: parseInt(flags.limit || '10'),
-      after: flags.after,
-      before: flags.before,
-      project: flags.project,
-    };
+// --- commands --------------------------------------------------------------
 
-    if (queries.length >= 2) {
+const COMMANDS = {
+  search: {
+    summary: 'search past sessions',
+    usage: 'arca search "query" ["query" ...] [options]',
+    detail: [
+      'One query runs a hybrid of vector similarity and full-text search, fused',
+      'by reciprocal rank. Two or more run a multi-concept AND: every concept',
+      'has to be present, which is the precise end of the tool.',
+    ],
+    flags: {
+      mode: { value: 'both|vector|text', describe: 'retrieval mode (default both)' },
+      limit: F.limit,
+      after: { value: 'YYYY-MM-DD', describe: 'only after this date' },
+      before: { value: 'YYYY-MM-DD', describe: 'only before this date' },
+      project: F.project,
+    },
+    examples: [
+      'arca search "why did we drop better-sqlite3"',
+      'arca search "tokenizer" "glibc" --limit 5',
+      'arca search "deploy" --project ai-cl --after 2026-06-01',
+    ],
+    async run({ flags, positional }) {
+      if (!positional.length) fail('search needs a query');
+      const mode = flags.mode || 'both';
+      if (!['both', 'vector', 'text'].includes(mode)) {
+        fail(`--mode wants both, vector or text, got "${mode}"`);
+      }
+      const opts = {
+        mode,
+        limit: num(flags.limit, 'limit') ?? 10,
+        after: flags.after,
+        before: flags.before,
+        project: flags.project,
+      };
       const S = await lazy.search();
-      const results = await S.searchMultiConcept(queries, opts);
-      console.log(S.formatMultiConceptMarkdown(results, queries));
-    } else {
-      const S = await lazy.search();
-      const results = await S.search(queries[0], opts);
-      console.log(S.formatResultsMarkdown(results));
-    }
-  } else if (cmd === 'read') {
-    const filePath = args[1];
-    const startLine = args[2] ? parseInt(args[2]) : undefined;
-    const endLine = args[3] ? parseInt(args[3]) : undefined;
+      if (positional.length >= 2) {
+        const results = await S.searchMultiConcept(positional, opts);
+        console.log(S.formatMultiConceptMarkdown(results, positional));
+      } else {
+        console.log(S.formatResultsMarkdown(await S.search(positional[0], opts)));
+      }
+    },
+  },
 
-    if (!filePath || !fs.existsSync(filePath)) {
-      console.error('Usage: node cli.js read <path> [startLine] [endLine]');
-      process.exit(1);
-    }
+  read: {
+    summary: 'print a conversation as markdown',
+    usage: 'arca read <path> [startLine] [endLine]',
+    detail: [
+      'Reads in chunks, so ten lines out of a 500 MB transcript cost what ten',
+      'lines should. Without a range it prints the head and says what it left.',
+    ],
+    flags: {},
+    examples: ['arca read ~/.claude-vault/my-project/abc.jsonl 1 200'],
+    async run({ positional }) {
+      const [file, start, end] = positional;
+      if (!file) fail('read needs a path');
+      if (!fs.existsSync(file)) fail(`no such file: ${file}`);
+      const { showConversation } = await lazy.show();
+      console.log(showConversation(
+        file,
+        start ? Number(start) : undefined,
+        end ? Number(end) : undefined,
+      ));
+    },
+  },
 
-    const { showConversation } = await lazy.show();
-    console.log(showConversation(filePath, startLine, endLine));
-  } else if (cmd === 'restore') {
-    const { flags, positional } = parseFlags(args.slice(1));
-    const id = positional[0];
-    if (!id) {
+  stats: {
+    summary: 'what the vault and the index hold',
+    usage: 'arca stats',
+    flags: {},
+    async run() {
+      dbModule = await lazy.db();
+      const s = dbModule.getStats();
+      console.log(`arca index: ${s.exchanges} exchanges, ${s.projects} projects, ${s.files} files`);
+    },
+  },
+
+  index: {
+    summary: 'fold new exchanges into the index',
+    usage: 'arca index [--full]',
+    detail: [
+      'Incremental by default and safe to re-run. --full re-reads every archive',
+      'and reconciles: an archive that is gone leaves the index too.',
+      '',
+      'The index is derived. Nothing in it cannot be rebuilt from the vault.',
+    ],
+    flags: { full: { boolean: true, describe: 'rebuild from every archive' } },
+    passthrough: true,
+    async run({ argv }) {
+      // The indexer loads the embedding model and has its own lifecycle, so it
+      // runs as a child rather than being pulled into this process.
+      const r = spawnSync(process.execPath, [nodePath.join(HERE, 'indexer.js'), ...argv], {
+        stdio: 'inherit',
+      });
+      process.exitCode = r.status === null ? 1 : r.status;
+    },
+  },
+
+  restore: {
+    summary: 'put back a session Claude Code no longer has',
+    usage: 'arca restore [<id>] [options]',
+    detail: [
+      'With no id, lists archived sessions missing from ~/.claude/projects/.',
+      'With an id, copies that one back, where it appears in `claude --resume`',
+      'for its project.',
+      '',
+      'A live transcript is never replaced without --force, and even then the',
+      'copy it replaced is kept beside it.',
+    ],
+    flags: {
+      limit: F.limit,
+      project: F.project,
+      force: { boolean: true, describe: 'replace a live transcript (the old one is kept)' },
+      'include-imported': {
+        boolean: true,
+        describe: 'include claude.ai imports, which Claude Code cannot resume',
+      },
+    },
+    examples: ['arca restore', 'arca restore 3f9c1a2b --force'],
+    async run({ flags, positional }) {
+      const { listRestorable, restoreSession } = await lazy.restore();
+      const id = positional[0];
+      if (id) {
+        const r = restoreSession(id, { force: !!flags.force });
+        console.log(`Restored ${r.id} into ${r.project}`);
+        console.log(`  ${r.to}`);
+        if (r.overwrote) {
+          console.log(`  (overwrote the live transcript; the replaced copy is at ${r.preserved})`);
+        }
+        if (r.note) console.log(`  note: ${r.note}`);
+        console.log('');
+        console.log('It will appear in `claude --resume` for that project.');
+        return;
+      }
       let db = null;
       try { dbModule = await lazy.db(); db = dbModule.getDb(); }
-      catch { /* listing works without the index */ }
-      const rows = listRestorable({
-        limit: flags.limit ? parseInt(flags.limit) : 20,
+      catch { /* the listing works without the index */ }
+      const filter = {
         project: flags.project || null,
         includeImported: !!flags['include-imported'],
-        db,
-      });
-      // The total must obey the same filters as the rows, or the header promises
+      };
+      const rows = listRestorable({ ...filter, limit: num(flags.limit, 'limit') ?? 20, db });
+      // The total obeys the same filters as the rows, or the header promises
       // sessions the listing does not show.
-      const total = listRestorable({ limit: 0, db: null, project: flags.project || null, includeImported: !!flags['include-imported'] }).length;
+      const total = listRestorable({ ...filter, limit: 0, db: null }).length;
       if (!total) {
         console.log('Nothing to restore — every archived session is still in ~/.claude/projects/.');
-      } else {
-        console.log(`${total} archived session(s) Claude Code no longer has. Most recent first:\n`);
-        for (const r of rows) {
-          const size = r.bytes > 1048576 ? `${(r.bytes / 1048576).toFixed(1)} MB` : `${(r.bytes / 1024).toFixed(0)} KB`;
-          const when = r.last ? `${r.first} -> ${r.last}` : '(not indexed)';
-          const ex = r.exchanges ? `${r.exchanges} exchanges` : '';
-          console.log(`  ${r.id}  ${size.padStart(8)}  ${when}  ${ex}`);
-          console.log(`    ${r.project}`);
-        }
-        console.log(`\nRestore one with:  arca restore <id>`);
+        return;
       }
-    } else {
-      const r = restoreSession(id, { force: !!flags.force });
-      console.log(`Restored ${r.id} into ${r.project}`);
-      console.log(`  ${r.to}`);
-      if (r.overwrote) console.log(`  (overwrote the live transcript; the replaced copy is at ${r.preserved})`);
-      if (r.note) console.log(`  note: ${r.note}`);
-      console.log('\nIt will appear in `claude --resume` for that project.');
-    }
-  } else if (cmd === 'install') {
-    const { flags: iflags } = parseFlags(args.slice(1));
-    const r = install({ dryRun: !!iflags['dry-run'], seed: !iflags['no-seed'] });
-    const tag = r.dryRun ? '[dry-run] ' : '';
-    console.log(`${tag}arca at ${r.root}`);
-    console.log(`${tag}settings.json: ${r.settings}`);
-    console.log(`${tag}mcp config:    ${r.mcp}`);
-    console.log(`${tag}files:         ${r.files.length ? r.files.join(', ') : 'all current'}`);
-    for (const b of r.backups) console.log(`  backed up: ${b}`);
-    if (r.seeded) console.log(`${tag}seed:          ${r.seeded}`);
-    if (r.dryRun) console.log('\nNothing was written. Run without --dry-run to apply.');
-  } else if (cmd === 'index') {
-    // Two places told people to run `arca index` and no such command existed.
-    // The indexer is a script with its own lifecycle (it loads the embedding
-    // model), so it runs as a child rather than being pulled into this process.
-    const here = nodePath.dirname(fileURLToPath(import.meta.url));
-    const r = spawnSync(process.execPath, [nodePath.join(here, 'indexer.js'), ...args.slice(1)], {
-      stdio: 'inherit',
-    });
-    process.exitCode = r.status === null ? 1 : r.status;
-  } else if (cmd === 'import') {
-    const { flags, positional } = parseFlags(args.slice(1));
-    const src = positional[0];
-    if (!src) {
-      console.error('usage: arca import <dir-with-export-zips> [--dry-run] [--keep-temp]');
-      process.exit(1);
-    }
-    const dryRun = !!flags['dry-run'];
-    const stats = runImport(src, { dryRun, keepTemp: !!flags['keep-temp'] });
-    const tag = dryRun ? '[dry-run] ' : '';
-    console.log(`${tag}conversations ${stats.conversations}: ${stats.created} new, ${stats.updated} changed, ${stats.unchanged} unchanged, ${stats.empty} empty, ${stats.unreadable} unreadable`);
-    if (!dryRun && (stats.created || stats.updated)) {
-      console.log('Run `arca index` to fold them into the index.');
-    }
-  } else if (cmd === 'resurrect') {
-    const { flags, positional } = parseFlags(args.slice(1));
-    const id = positional[0];
-    if (!id) {
+      console.log(`${total} archived session(s) Claude Code no longer has. Most recent first:`);
+      console.log('');
+      for (const r of rows) {
+        const when = r.last ? `${r.first} -> ${r.last}` : '(not indexed)';
+        const ex = r.exchanges ? `${r.exchanges} exchanges` : '';
+        console.log(`  ${r.id}  ${human(r.bytes).padStart(8)}  ${when}  ${ex}`);
+        console.log(`    ${r.project}`);
+      }
+      console.log('');
+      console.log('Restore one with:  arca restore <id>');
+    },
+  },
+
+  resurrect: {
+    summary: 'fork a transcript that resume cannot open',
+    usage: 'arca resurrect [<id>] [options]',
+    detail: [
+      'Some transcripts grow past what the resume parser will load. With no id,',
+      'lists the ones at risk. With an id, forks a new session from the last',
+      'compact boundary — everything before it is already summarised there.',
+      '',
+      'The original is never touched.',
+    ],
+    flags: {
+      project: F.project,
+      all: { boolean: true, describe: 'list every transcript, not only the troubled ones' },
+      'dry-run': F.dryRun,
+    },
+    examples: ['arca resurrect', 'arca resurrect 8d21ff90 --dry-run'],
+    async run({ flags, positional }) {
+      const { diagnose, forkSession } = await lazy.resurrect();
+      const id = positional[0];
+      if (id) {
+        const r = await forkSession(id, { dryRun: !!flags['dry-run'] });
+        const tag = r.dryRun ? '[dry-run] ' : '';
+        const pct = (r.kept / r.lines * 100).toFixed(1);
+        console.log(`${tag}${r.id} in ${r.project}`);
+        console.log(`${tag}  ${r.lines} lines, last compact boundary at ${r.lastBoundary}`);
+        console.log(`${tag}  keeping ${r.kept} lines (${pct}%) as ${r.newId}`);
+        console.log('');
+        if (r.dryRun) {
+          console.log('Nothing was written. Run without --dry-run to fork.');
+        } else {
+          console.log(`  ${r.to}`);
+          console.log(`  ${human(r.bytes)} -> ${human(r.newBytes)}`);
+          console.log('');
+          console.log('The original is untouched. The fork appears in `claude --resume`.');
+        }
+        return;
+      }
       const all = !!flags.all;
       const rows = diagnose({ project: flags.project || null, all });
       if (!rows.length) {
-        console.log(all ? 'No transcripts found.' : 'No transcript is large enough to trouble the resume parser.');
-      } else {
-        console.log(`${rows.length} transcript(s), largest first:`);
-        console.log('');
-        for (const r of rows) {
-          const size = r.bytes > 1048576 ? `${(r.bytes / 1048576).toFixed(1)} MB` : `${(r.bytes / 1024).toFixed(0)} KB`;
-          console.log(`  ${r.status.toUpperCase().padEnd(8)} ${size.padStart(9)}  ${r.id}`);
-          console.log(`    ${r.project}`);
-        }
-        console.log('');
-        console.log('Fork one from its last compact boundary with:  arca resurrect <id>');
+        console.log(all
+          ? 'No transcripts found.'
+          : 'No transcript is large enough to trouble the resume parser.');
+        return;
       }
-    } else {
-      const r = await forkSession(id, { dryRun: !!flags['dry-run'] });
+      console.log(`${rows.length} transcript(s), largest first:`);
+      console.log('');
+      for (const r of rows) {
+        console.log(`  ${r.status.toUpperCase().padEnd(8)} ${human(r.bytes).padStart(9)}  ${r.id}`);
+        console.log(`    ${r.project}`);
+      }
+      console.log('');
+      console.log('Fork one from its last compact boundary with:  arca resurrect <id>');
+    },
+  },
+
+  import: {
+    summary: 'fold a claude.ai export into the vault',
+    usage: 'arca import <dir-with-export-zips> [options]',
+    detail: [
+      'Point it at the directory your claude.ai data export landed in. Safe to',
+      'run again: a conversation that has not changed is left alone.',
+    ],
+    flags: {
+      'dry-run': F.dryRun,
+      'keep-temp': { boolean: true, describe: 'leave the unpacked export for inspection' },
+    },
+    examples: ['arca import ~/Downloads --dry-run'],
+    async run({ flags, positional }) {
+      const src = positional[0];
+      if (!src) fail('import needs the directory holding the export zips');
+      const { runImport } = await lazy.importer();
+      const dryRun = !!flags['dry-run'];
+      const s = runImport(src, { dryRun, keepTemp: !!flags['keep-temp'] });
+      const tag = dryRun ? '[dry-run] ' : '';
+      console.log(`${tag}conversations ${s.conversations}: ${s.created} new, ${s.updated} changed, `
+        + `${s.unchanged} unchanged, ${s.empty} empty, ${s.unreadable} unreadable`);
+      if (!dryRun && (s.created || s.updated)) {
+        console.log('Run `arca index` to fold them into the index.');
+      }
+    },
+  },
+
+  install: {
+    summary: 'register the hook, the MCP server and the skills',
+    usage: 'arca install [options]',
+    detail: [
+      'Writes into ~/.claude/settings.json and the MCP config, backing up what',
+      'it touches. It only claims entries that point into this package — a hook',
+      'of yours that happens to share a name is reported and left alone.',
+    ],
+    flags: {
+      'dry-run': F.dryRun,
+      'no-seed': { boolean: true, describe: 'do not archive existing transcripts on install' },
+    },
+    examples: ['arca install --dry-run'],
+    async run({ flags }) {
+      const { install } = await lazy.install();
+      const r = install({ dryRun: !!flags['dry-run'], seed: !flags['no-seed'] });
       const tag = r.dryRun ? '[dry-run] ' : '';
-      console.log(`${tag}${r.id} in ${r.project}`);
-      console.log(`${tag}  ${r.lines} lines, last compact boundary at ${r.lastBoundary}`);
-      console.log(`${tag}  keeping ${r.kept} lines (${(r.kept / r.lines * 100).toFixed(1)}%) as ${r.newId}`);
+      console.log(`${tag}arca at ${r.root}`);
+      console.log(`${tag}settings.json: ${r.settings}`);
+      console.log(`${tag}mcp config:    ${r.mcp}`);
+      console.log(`${tag}files:         ${r.files.length ? r.files.join(', ') : 'all current'}`);
+      for (const b of r.backups) console.log(`  backed up: ${b}`);
+      if (r.seeded) console.log(`${tag}seed:          ${r.seeded}`);
       if (r.dryRun) {
         console.log('');
-        console.log('Nothing was written. Run without --dry-run to fork.');
-      } else {
-        console.log(`  ${r.to}`);
-        console.log(`  ${(r.bytes / 1048576).toFixed(1)} MB -> ${(r.newBytes / 1048576).toFixed(1)} MB`);
-        console.log('');
-        console.log('The original is untouched. The fork appears in `claude --resume` for that project.');
+        console.log('Nothing was written. Run without --dry-run to apply.');
       }
-    }
-  } else if (cmd === 'stats') {
-    dbModule = await lazy.db();
-    const stats = dbModule.getStats();
-    console.log(`arca index: ${stats.exchanges} exchanges, ${stats.projects} projects, ${stats.files} files`);
-  } else {
-    console.error('Commands: search, read, stats, index, restore, resurrect, import, install');
-    process.exit(1);
+    },
+  },
+};
+
+// --- help ------------------------------------------------------------------
+
+function pad(rows) {
+  const w = Math.max(...rows.map(([left]) => left.length));
+  return rows.map(([left, right]) => `  ${left.padEnd(w)}  ${right}`);
+}
+
+function overview() {
+  return [
+    'arca — a vault for everything Claude Code throws away.',
+    '',
+    'Usage: arca <command> [options]',
+    '',
+    'Commands:',
+    ...pad(Object.entries(COMMANDS).map(([name, c]) => [name, c.summary])),
+    '',
+    ...pad([
+      ['-h, --help', 'this, or `arca help <command>` for one command'],
+      ['-V, --version', 'print the version'],
+    ]),
+    '',
+    'The vault lives in ~/.claude-vault and is a git repository. The index is',
+    'derived from it, and `arca index --full` rebuilds it from scratch.',
+  ].join('\n');
+}
+
+function commandHelp(name) {
+  const c = COMMANDS[name];
+  if (!c) fail(unknownCommand(name));
+  const out = [c.summary, '', `Usage: ${c.usage}`];
+  if (c.detail) out.push('', ...c.detail);
+  const flags = Object.entries(c.flags);
+  if (flags.length) {
+    out.push('', 'Options:', ...pad(flags.map(([f, d]) => [
+      d.boolean ? `--${f}` : `--${f} <${d.value}>`,
+      d.describe,
+    ])));
   }
+  if (c.examples) out.push('', 'Examples:', ...c.examples.map((e) => `  ${e}`));
+  return out.join('\n');
+}
+
+function unknownCommand(word) {
+  const names = Object.keys(COMMANDS);
+  const guess = nearest(word, names);
+  return guess
+    ? `unknown command "${word}" (did you mean "${guess}"?)`
+    : `unknown command "${word}"\n\nCommands: ${names.join(', ')}`;
+}
+
+// --- dispatch --------------------------------------------------------------
+
+const argv = process.argv.slice(2);
+
+try {
+  const first = argv[0];
+
+  if (!first || first === '-h' || first === '--help') {
+    console.log(overview());
+  } else if (first === 'help') {
+    console.log(argv[1] ? commandHelp(argv[1]) : overview());
+  } else if (first === '-V' || first === '--version') {
+    console.log(version());
+  } else {
+    const command = COMMANDS[first];
+    if (!command) fail(unknownCommand(first));
+    const rest = argv.slice(1);
+    if (rest.includes('--help') || rest.includes('-h')) {
+      console.log(commandHelp(first));
+    } else if (command.passthrough) {
+      // Validated here for the sake of a good error, then handed on verbatim.
+      parse(command.flags, rest);
+      await command.run({ argv: rest });
+    } else {
+      await command.run({ ...parse(command.flags, rest), argv: rest });
+    }
+  }
+} catch (e) {
+  console.error(`arca: ${e.message}`);
+  if (e instanceof UsageError) {
+    console.error('');
+    console.error('Try `arca --help`.');
+    process.exit(2);
+  }
+  process.exit(1);
 } finally {
   if (dbModule) dbModule.closeDb();
 }
-})();
