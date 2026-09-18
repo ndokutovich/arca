@@ -29,7 +29,8 @@ import {
 import { showConversation } from './lib/show.js';
 import { getDb, getStats, closeDb, addTriple, invalidateTriple, queryTriples, kgTimeline,
   addObservation, searchObservations, observationIndex, getObservation, OBSERVATION_TYPES,
-  listThreads, searchThreads, getThread } from './lib/db.js';
+  listThreads, searchThreads, getThread,
+  searchPrompts, promptStats } from './lib/db.js';
 import { embed } from './lib/embeddings.js';
 
 const server = new Server(
@@ -178,6 +179,27 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         additionalProperties: false,
       },
       annotations: { title: 'Recent Status Pings', readOnlyHint: true, idempotentHint: true, openWorldHint: false },
+    },
+    {
+      name: 'prompt_search',
+      description:
+        'Search every prompt the user has ever typed, including ones whose session no longer exists. ' +
+        'Claude Code keeps these in a history file outside the per-project transcripts, so they survive ' +
+        'the transcript being deleted — this is the only way to recover what was asked in a session that ' +
+        'is gone. Set lost_only to see just those. Returns date, project, machine, and the prompt text. ' +
+        'A prompt has no reply attached: for the conversation itself, use search.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          query: { type: 'string', minLength: 2, description: 'Full-text query over prompt text' },
+          project: { type: 'string', description: 'Filter by project substring' },
+          lost_only: { type: 'boolean', default: false, description: 'Only prompts with no surviving session' },
+          limit: { type: 'number', minimum: 1, maximum: 100, default: 20 },
+        },
+        required: ['query'],
+        additionalProperties: false,
+      },
+      annotations: { title: 'Prompt Search', readOnlyHint: true, idempotentHint: true, openWorldHint: false },
     },
     {
       name: 'entity_profile',
@@ -555,6 +577,24 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         lines.push(`[${r.timestamp.slice(0, 16)}] (${r.project})`);
         lines.push(`  Q: ${head}`);
         lines.push(`  A: ${reply}…`);
+        lines.push('');
+      }
+      return { content: [{ type: 'text', text: lines.join('\n') }] };
+    }
+
+    if (name === 'prompt_search') {
+      const { query, project, lost_only = false, limit = 20 } = args;
+      const rows = searchPrompts(query, { project: project || null, orphansOnly: !!lost_only, limit });
+      const s = promptStats();
+      const lines = [
+        `${rows.length} prompt(s) for "${query}"${lost_only ? ', none of which has a surviving session' : ''}`,
+        `(${s.total} prompts stored, ${s.orphans} with no session behind them)`,
+        '',
+      ];
+      for (const r of rows) {
+        const text = r.text.replace(/\s+/g, ' ').trim();
+        lines.push(`[${r.timestamp.slice(0, 16).replace('T', ' ')}] (${r.project})${r.has_session ? '' : '  — session lost'}`);
+        lines.push(`  ${text.length > 400 ? `${text.slice(0, 400)}…` : text}`);
         lines.push('');
       }
       return { content: [{ type: 'text', text: lines.join('\n') }] };

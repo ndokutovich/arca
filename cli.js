@@ -194,7 +194,12 @@ const COMMANDS = {
       dbModule = await lazy.db();
       const s = dbModule.getStats();
       console.log(`arca index: ${s.exchanges} exchanges, ${s.projects} projects, ${s.files} files`);
+      let prompts = null;
+      try { prompts = dbModule.promptStats(); } catch { /* table may predate this */ }
       const layers = [
+        ['prompts', prompts?.total
+          ? `${prompts.total} (${prompts.orphans} with no surviving session)`
+          : 'none — run `arca prompts --import`'],
         ['essence extracts', s.essence_extracts],
         ['entities', `${s.entities} (${s.cross_project_entities} cross-project)`],
         ['kg triples', `${s.kg_triples} (${s.kg_current} current)`],
@@ -392,6 +397,90 @@ const COMMANDS = {
       if (!dryRun && (s.created || s.updated)) {
         console.log('Run `arca index` to fold them into the index.');
       }
+    },
+  },
+
+  prompts: {
+    summary: 'search what you typed, including where the session is gone',
+    usage: 'arca prompts ["query"] [options]',
+    detail: [
+      'Claude Code keeps every prompt you have typed in ~/.claude/history.jsonl,',
+      'outside the per-project transcripts and outliving them. So it still holds',
+      'the questions from sessions that were cleaned up — before arca existed,',
+      'or before the hook was installed.',
+      '',
+      '--import copies new entries into the vault, where they travel with it,',
+      'and folds them into the index. Nothing is copied wholesale: only entries',
+      'newer than what is already stored, so the vault copy stays append-only.',
+      '',
+      'A prompt is an orphan when no exchange in the index opens with it. Those',
+      'are the ones nothing else can recover.',
+    ],
+    flags: {
+      import: { boolean: true, describe: 'pull new entries from ~/.claude/history.jsonl' },
+      orphans: { boolean: true, describe: 'only prompts whose session is gone' },
+      project: F.project,
+      limit: F.limit,
+    },
+    examples: [
+      'arca prompts --import',
+      'arca prompts "xtts"',
+      'arca prompts "docker" --orphans',
+    ],
+    async run({ flags, positional }) {
+      const H = await import('./lib/history.js');
+      dbModule = await lazy.db();
+
+      if (flags.import) {
+        const synced = H.syncToVault();
+        console.log(`history: ${synced.appended} new entr(ies) archived, ${synced.total} in the vault`);
+        const stored = dbModule.upsertPrompts(H.readVault(), H.promptId, H.echoHash);
+        const echoes = dbModule.markPromptEchoes(H.echoHash);
+        console.log(`index:   ${stored} new prompt(s); ${echoes.matched} still have their session `
+          + `(${echoes.byText} matched word for word), ${echoes.orphans} do not`);
+        console.log('');
+      }
+
+      const limit = num(flags.limit, 'limit') ?? 20;
+      const query = positional.join(' ').trim();
+      if (!query) {
+        const s = dbModule.promptStats();
+        if (!s.total) {
+          console.log('No prompts stored yet. Run `arca prompts --import`.');
+          return;
+        }
+        console.log(`${s.total} prompts, ${s.orphans} with no surviving session`);
+        console.log(`${(s.first || '').slice(0, 10)} -> ${(s.last || '').slice(0, 10)}`);
+        if (s.machines.length > 1) {
+          console.log('');
+          for (const m of s.machines) {
+            console.log(`  ${(m.machine || '(unknown)').padEnd(16)} ${String(m.c).padStart(7)}  ${m.orphans} orphaned`);
+          }
+        }
+        console.log('');
+        console.log('Search them with:  arca prompts "query"');
+        return;
+      }
+
+      const rows = dbModule.searchPrompts(query, {
+        project: flags.project || null,
+        orphansOnly: !!flags.orphans,
+        limit,
+      });
+      if (!rows.length) {
+        console.log(`Nothing matched "${query}".`);
+        return;
+      }
+      console.log(`${rows.length} prompt(s):`);
+      console.log('');
+      for (const r of rows) {
+        const mark = r.has_session ? ' ' : '!';
+        const text = r.text.replace(/\s+/g, ' ').trim();
+        console.log(`${mark} ${r.timestamp.slice(0, 16).replace('T', ' ')}  ${r.project}`);
+        console.log(`    ${text.length > 160 ? `${text.slice(0, 160)}...` : text}`);
+      }
+      console.log('');
+      console.log('! = no surviving session for this prompt');
     },
   },
 

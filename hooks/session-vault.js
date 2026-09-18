@@ -214,15 +214,30 @@ async function backup() {
   // from, which is the only thing a pull cannot work out for itself.
   //
   // Best effort: an unwritable manifest must not cost the archive.
-  if (copiedFiles.length > 0) {
+  const arcaDir = vaultMemoryDir();
+  if (arcaDir && copiedFiles.length > 0) {
     try {
-      const { claim } = await import(path.join(vaultMemoryDir(), 'lib', 'machine.js'));
+      const { claim } = await import(path.join(arcaDir, 'lib', 'machine.js'));
       claim(copiedFiles.map((f) => ({
         session: path.basename(f, '.jsonl'),
         project: path.basename(path.dirname(f)),
       })));
     } catch (e) {
       note('machine claim skipped: ' + ((e && e.message) || e));
+    }
+  }
+
+  // Prompts outlive their transcripts: ~/.claude/history.jsonl keeps every one
+  // ever typed, including from sessions that were deleted before this vault
+  // existed. Only entries newer than what is stored are appended, so the copy
+  // stays small in git.
+  if (arcaDir) {
+    try {
+      const { syncToVault } = await import(path.join(arcaDir, 'lib', 'history.js'));
+      const r = syncToVault();
+      if (r.appended) note(`history: +${r.appended} prompt(s)`);
+    } catch (e) {
+      note('history sync skipped: ' + ((e && e.message) || e));
     }
   }
 
