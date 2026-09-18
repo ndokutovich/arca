@@ -36,7 +36,12 @@ function main() {
   const db = getDb();
   const where = ['is_system_noise = 0', 'session_id IS NOT NULL'];
   const params = [];
-  if (projectFilter) { where.push('project LIKE ?'); params.push(`%${projectFilter}%`); }
+  // --project used to filter the scan, and the rebuild then replaced the
+  // global thread tables with that subset — every other project's threads
+  // were deleted. Threads are cross-project by construction: clustering a
+  // slice produces different, worse clusters anyway. The filter now applies
+  // to what is reported, not to what is rebuilt.
+
   const rows = db.prepare(`
     SELECT id, project, session_id, timestamp, line_start, user_message, assistant_message
     FROM exchanges WHERE ${where.join(' AND ')}
@@ -80,7 +85,10 @@ function main() {
   log(`Done: ${written.threads} threads, ${written.segments} segments written.`);
 
   if (!quiet) {
-    const cross = threads.filter((t) => t.n_sessions >= 2)
+    const shown = projectFilter
+      ? threads.filter((t) => (t.projects || []).some((p) => String(p).toLowerCase().includes(projectFilter.toLowerCase())))
+      : threads;
+    const cross = shown.filter((t) => t.n_sessions >= 2)
       .sort((a, b) => b.n_sessions - a.n_sessions).slice(0, 20);
     console.error(`\nTop cross-session threads (γ=${opts.gamma}):`);
     for (const t of cross) {

@@ -22,8 +22,10 @@ function main() {
   const log = quiet ? () => {} : (m) => console.error(m);
 
   const db = getDb();
-  const removed = clearAutoTriples();
-  log(`Cleared ${removed} prior auto-triples.`);
+  // Clearing before extraction meant any failure during the rebuild removed the
+  // previous graph for good. Collect everything first, then swap in one
+  // transaction: a failed run now leaves the old graph untouched.
+  const pendingFacts = [];
 
   // Gate facts to resolved entities (project span >= 2) — KG rides on real nodes.
   const known = new Set(db.prepare('SELECT id FROM entities WHERE project_count >= 2').all().map((r) => r.id));
@@ -37,21 +39,32 @@ function main() {
   `).all();
   log(`Scanning ${rows.length} exchanges chronologically...`);
 
-  let added = 0;
+  // Extract first, into memory; nothing in the database has changed yet.
   for (const r of rows) {
     const day = (r.timestamp || '').slice(0, 10) || null;
     for (const msg of [r.user_message, r.assistant_message]) {
       if (!msg) continue;
       for (const f of extractFacts(msg, { known })) {
-        const id = addTriple({
+        pendingFacts.push({
           subject: f.subject, predicate: f.predicate, object: f.object,
           valid_from: day, confidence: f.confidence,
           method: METHOD[f.predicate] || 'auto', source_exchange: r.id, source_project: r.project,
         });
-        if (id) added++;
       }
     }
   }
+
+  // Then swap: clear the previous auto-layer and write the new one together,
+  // so an interrupted rebuild leaves the old graph rather than no graph.
+  let added = 0;
+  let removed = 0;
+  db.transaction(() => {
+    removed = clearAutoTriples();
+    for (const f of pendingFacts) {
+      if (addTriple(f)) added++;
+    }
+  })();
+  log(`Cleared ${removed} prior auto-triples.`);
 
   const s = kgStats();
   log(`Done: ${added} triple-writes · ${s.triples} total (${s.current} current) across ${s.subjects} subjects`);

@@ -81,9 +81,12 @@ function main() {
 
   // Pass 3 — write mentions (idempotent per exchange), recompute aggregates.
   // Clear stale layer first for a clean full rebuild.
-  db.exec('DELETE FROM entity_mentions');
+  // The clear used to sit outside the transaction below, so an extraction or
+  // insert failure left the entity layer empty rather than stale. Stale is
+  // recoverable; empty is not.
   let written = 0;
   const tx = db.transaction(() => {
+    db.exec('DELETE FROM entity_mentions');
     for (const [exId, mentions] of byExchange) {
       upsertEntityMentions(exId, mentions);
       written += mentions.length;
