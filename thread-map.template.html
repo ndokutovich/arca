@@ -42,9 +42,9 @@
     <h1>🧠 Thought Navigator</h1>
     <span class="stat" id="hdrStat"></span>
     <div class="views">
-      <button data-v="graph" class="active">Созвездие</button>
-      <button data-v="river">Река времени</button>
-      <button data-v="arcs">Таймлайн + дуги</button>
+      <button data-v="graph" class="active">Constellation</button>
+      <button data-v="river">Time river</button>
+      <button data-v="arcs">Timeline + arcs</button>
     </div>
   </div>
   <div id="main">
@@ -56,7 +56,7 @@
       <div class="hint" id="hint"></div>
       <div id="tip"></div>
     </div>
-    <aside id="panel" class="empty">Кликни тему — развернётся её хронология сквозь все сессии.</aside>
+    <aside id="panel" class="empty">Pick a thread to unfold its chronology across every session.</aside>
   </div>
 
 <script>
@@ -67,7 +67,7 @@ const byId = Object.fromEntries(T.map(t => [t.id, t]));
 const shortP = p => p.replace(/^w---proj--own--/,'').replace(/^w---proj--/,'').replace(/^C---init-w--proj--own--/,'').replace(/claude-code-advanced--/,'').replace(/ideator-?-?/,'');
 const segsOf = id => SEG.filter(s => s.t === id).sort((a,b)=> (a.ts||'').localeCompare(b.ts||''));
 document.getElementById('hdrStat').textContent =
-  `${T.length} тем · ${SEG.length} тактов · ${new Set(SEG.map(s=>s.p)).size} проектов`;
+  `${T.length} threads · ${SEG.length} segments · ${new Set(SEG.map(s=>s.p)).size} projects`;
 
 // ---------- shared selection / detail panel ----------
 let selected = null;
@@ -77,10 +77,10 @@ function selectThread(id) {
   const segs = segsOf(id);
   panel.innerHTML =
     `<h2>${t.label}</h2>
-     <div class="meta">${t.ex} обменов · ${t.sess} сессий · ${t.proj} проектов · ⤺${t.ret} возвратов<br>
+     <div class="meta">${t.ex} exchanges · ${t.sess} sessions · ${t.proj} projects · ⤺${t.ret} returns<br>
       ${(t.first||'').slice(0,10)} → ${(t.last||'').slice(0,10)}</div>
      <div class="chips">${(t.projects||[]).map(p=>`<span class="chip" style="border-color:${PC[p]||'#333'}">${shortP(p)}</span>`).join('')}</div>
-     <div style="color:var(--dim);font-size:11px;margin-bottom:6px">ХРОНОЛОГИЯ — ${segs.length} тактов</div>` +
+     <div style="color:var(--dim);font-size:11px;margin-bottom:6px">CHRONOLOGY — ${segs.length} segments</div>` +
     segs.map(s=>`<div class="seg"><span class="d">${(s.ts||'').slice(0,10)}</span>
        <span class="p"> · ${shortP(s.p)} · ${s.ex}ex</span>
        <div class="s">${(s.s||'').replace(/</g,'&lt;')}</div></div>`).join('');
@@ -269,9 +269,9 @@ function renderArcs(){
 
 // ---------- view switching ----------
 let state='graph';
-const hints={graph:'тяга = смысловая близость · кольцо = высокая фрагментация · клик = нырнуть',
-  river:'толщина ленты = активность темы по неделям · клик = нырнуть',
-  arcs:'дуга назад = возврат к теме · густо = тема дёргала · клик = нырнуть'};
+const hints={graph:'pull = semantic closeness · ring = heavily fragmented · click to dive in',
+  river:'ribbon thickness = weekly activity · click to dive in',
+  arcs:'an arc back = a return to the thread · dense = it kept pulling you · click to dive in'};
 function setView(v){
   state=v; rafOn=false;
   document.querySelectorAll('.views button').forEach(b=>b.classList.toggle('active',b.dataset.v===v));

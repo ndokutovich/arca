@@ -174,6 +174,19 @@ threads, observations. In `~/.claude.json`:
 `skill/SKILL.md` and `agent/search-conversations.md` are installable Claude Code
 surfaces for the same thing, if you prefer a skill over an MCP server.
 
+## It reads more than English
+
+The layers that classify and extract work on Russian as well as English, because
+that is what the corpus they were built against looks like. Prompt
+classification recognises Russian go-aheads and approvals; essence extraction
+picks up decisions and constraints phrased in Russian; and the word-boundary
+helper exists because JavaScript's `` does not treat Cyrillic as word
+characters, so a naive `давай` silently matches nothing.
+
+Nothing is English-only by design — but nothing else is deliberately supported
+yet either. Another language needs its own patterns in `lib/control.js` and
+`lib/essence.js`; the machinery around them is language-agnostic.
+
 ## Your own names
 
 The entity layer ships with a generic list of tools and technologies. Your own
