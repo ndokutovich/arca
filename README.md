@@ -61,6 +61,8 @@ node build-threads.js        # rebuild topic threads
 node build-thread-map.js     # render threads to an interactive thread-map.html
 node cli.js search "query"   # search from the shell
 node cli.js restore          # sessions Claude Code no longer has
+node cli.js resurrect        # sessions resume cannot open
+node cli.js import <dir>     # fold in a claude.ai export
 node cli.js install          # register with Claude Code
 ```
 
@@ -95,6 +97,30 @@ Conversations imported from claude.ai are left out of the listing: they index an
 search like everything else, but they were never Claude Code sessions, so
 offering to resume one would be offering something that never existed. Name one
 explicitly if you want it back anyway.
+
+## Resurrect a session Claude Code cannot open
+
+The other way a session is lost. The transcript is still there and still
+intact, but resume refuses it — the file grew past what the parser will read,
+or its schema drifted across a CLI upgrade. The failure is quiet and easy to
+misread: resume appears to work, and you get a session with no memory of
+anything, appending turns to a history it never loaded.
+
+```bash
+arca resurrect               # transcripts big enough to trouble the parser
+arca resurrect <id>          # fork one from its last compact boundary
+arca resurrect <id> --dry-run
+```
+
+The fork follows the parser's own logic. On resume it finds the last
+`compact_boundary`, injects the synthetic summary that follows it as the
+conversation's memory, and replays the rest. Everything before that boundary
+was already discarded when `/compact` ran — forking does not lose it, the
+compact did. So the fork keeps every turn resume would have used, drops only
+what it would have ignored, and lands in a file small enough to open.
+
+The original is never touched. The fork gets a new id and every record is
+retagged to it, so the file agrees with its own name.
 
 ## Wire it up
 
@@ -182,7 +208,7 @@ The archive is a normal git repository. Back it up, push it somewhere private, o
 A claude.ai data export can be folded into the same index:
 
 ```bash
-node import-claude-ai.js /path/to/export-dir
+arca import /path/to/export-dir
 ```
 
 It takes the directory of zips the export arrives as, converts each conversation into

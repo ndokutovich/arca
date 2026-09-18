@@ -25,6 +25,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { execFileSync } from 'child_process';
+import { fileURLToPath } from 'url';
 import { StringDecoder } from 'string_decoder';
 
 const VAULT_DIR = path.join(os.homedir(), '.claude-vault');
@@ -173,15 +174,13 @@ function importDesignChats(dir, stats, dryRun) {
   }
 }
 
-function main() {
-  const args = process.argv.slice(2);
-  const dryRun = args.includes('--dry-run');
-  const keepTemp = args.includes('--keep-temp');
-  const src = args.find((a) => !a.startsWith('--'));
-  if (!src) {
-    console.error('usage: node import-claude-ai.js <dir-with-export-zips> [--dry-run] [--keep-temp]');
-    process.exit(1);
-  }
+/**
+ * Convert a claude.ai export into vault transcripts.
+ * Returns the tally so a caller can report it however it likes.
+ */
+export function runImport(src, { dryRun = false, keepTemp = false, log = console.error } = {}) {
+  if (!src) throw new Error('an export directory is required');
+  if (!fs.existsSync(src)) throw new Error(`no such directory: ${src}`);
 
   // Accept either the zip directory or an already-extracted one.
   let work = src;
@@ -193,14 +192,14 @@ function main() {
     for (const z of zips) {
       execFileSync('unzip', ['-q', '-o', path.join(src, z), '-d', work], { stdio: 'ignore' });
     }
-    console.error(`extracted ${zips.length} archive(s) to ${work}`);
+    log(`extracted ${zips.length} archive(s) to ${work}`);
   }
 
   const stats = { conversations: 0, created: 0, updated: 0, unchanged: 0, empty: 0, unreadable: 0 };
 
   const convFile = path.join(work, 'conversations.json');
   if (fs.existsSync(convFile)) {
-    console.error('reading conversations.json...');
+    log('reading conversations.json...');
     importConversations(convFile, stats, dryRun);
   }
   importDesignChats(path.join(work, 'design_chats'), stats, dryRun);
@@ -209,14 +208,29 @@ function main() {
     try { fs.rmSync(work, { recursive: true, force: true }); } catch (_) {}
   }
 
+  return stats;
+}
+
+function main() {
+  const args = process.argv.slice(2);
+  const src = args.find((a) => !a.startsWith('--'));
+  if (!src) {
+    console.error('usage: node import-claude-ai.js <dir-with-export-zips> [--dry-run] [--keep-temp]');
+    process.exit(1);
+  }
+  const dryRun = args.includes('--dry-run');
+  const stats = runImport(src, { dryRun, keepTemp: args.includes('--keep-temp') });
   console.error(
     `${dryRun ? '[dry-run] ' : ''}conversations ${stats.conversations}: ` +
     `${stats.created} new, ${stats.updated} changed, ${stats.unchanged} unchanged, ` +
     `${stats.empty} empty, ${stats.unreadable} unreadable`
   );
   if (!dryRun && (stats.created || stats.updated)) {
-    console.error('next: node indexer.js   (picks the new files up incrementally)');
+    console.error('next: arca index   (picks the new files up incrementally)');
   }
 }
 
-main();
+// Only self-run when invoked directly; `arca import` calls runImport().
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  main();
+}

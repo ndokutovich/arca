@@ -14,10 +14,15 @@
  *   node cli.js restore                            # sessions Claude Code lost
  *   node cli.js restore <id>                       # put one back
  *   node cli.js install [--dry-run]                # register hook, MCP, skills
+ *   node cli.js import <export-dir> [--dry-run]    # fold in a claude.ai export
+ *   node cli.js resurrect                          # transcripts resume cannot open
+ *   node cli.js resurrect <id> [--dry-run]         # fork one from its last compact
  */
 
 import { listRestorable, restoreSession } from './lib/restore.js';
 import { install } from './lib/install.js';
+import { diagnose, forkSession } from './lib/resurrect.js';
+import { runImport } from './import-claude-ai.js';
 import fs from 'fs';
 
 // The index pulls in native modules (better-sqlite3, sqlite-vec). `restore` and
@@ -131,12 +136,61 @@ try {
     for (const b of r.backups) console.log(`  backed up: ${b}`);
     if (r.seeded) console.log(`${tag}seed:          ${r.seeded}`);
     if (r.dryRun) console.log('\nNothing was written. Run without --dry-run to apply.');
+  } else if (cmd === 'import') {
+    const { flags, positional } = parseFlags(args.slice(1));
+    const src = positional[0];
+    if (!src) {
+      console.error('usage: arca import <dir-with-export-zips> [--dry-run] [--keep-temp]');
+      process.exit(1);
+    }
+    const dryRun = args.includes('--dry-run');
+    const stats = runImport(src, { dryRun, keepTemp: args.includes('--keep-temp') });
+    const tag = dryRun ? '[dry-run] ' : '';
+    console.log(`${tag}conversations ${stats.conversations}: ${stats.created} new, ${stats.updated} changed, ${stats.unchanged} unchanged, ${stats.empty} empty, ${stats.unreadable} unreadable`);
+    if (!dryRun && (stats.created || stats.updated)) {
+      console.log('Run `arca index` to fold them into the index.');
+    }
+  } else if (cmd === 'resurrect') {
+    const { flags, positional } = parseFlags(args.slice(1));
+    const id = positional[0];
+    if (!id) {
+      const all = args.includes('--all');
+      const rows = diagnose({ project: flags.project || null, all });
+      if (!rows.length) {
+        console.log(all ? 'No transcripts found.' : 'No transcript is large enough to trouble the resume parser.');
+      } else {
+        console.log(`${rows.length} transcript(s), largest first:`);
+        console.log('');
+        for (const r of rows) {
+          const size = r.bytes > 1048576 ? `${(r.bytes / 1048576).toFixed(1)} MB` : `${(r.bytes / 1024).toFixed(0)} KB`;
+          console.log(`  ${r.status.toUpperCase().padEnd(8)} ${size.padStart(9)}  ${r.id}`);
+          console.log(`    ${r.project}`);
+        }
+        console.log('');
+        console.log('Fork one from its last compact boundary with:  arca resurrect <id>');
+      }
+    } else {
+      const r = await forkSession(id, { dryRun: args.includes('--dry-run') });
+      const tag = r.dryRun ? '[dry-run] ' : '';
+      console.log(`${tag}${r.id} in ${r.project}`);
+      console.log(`${tag}  ${r.lines} lines, last compact boundary at ${r.lastBoundary}`);
+      console.log(`${tag}  keeping ${r.kept} lines (${(r.kept / r.lines * 100).toFixed(1)}%) as ${r.newId}`);
+      if (r.dryRun) {
+        console.log('');
+        console.log('Nothing was written. Run without --dry-run to fork.');
+      } else {
+        console.log(`  ${r.to}`);
+        console.log(`  ${(r.bytes / 1048576).toFixed(1)} MB -> ${(r.newBytes / 1048576).toFixed(1)} MB`);
+        console.log('');
+        console.log('The original is untouched. The fork appears in `claude --resume` for that project.');
+      }
+    }
   } else if (cmd === 'stats') {
     dbModule = await lazy.db();
     const stats = dbModule.getStats();
     console.log(`Vault Memory Index: ${stats.exchanges} exchanges, ${stats.projects} projects, ${stats.files} files`);
   } else {
-    console.error('Commands: search, read, stats, restore, install');
+    console.error('Commands: search, read, stats, restore, resurrect, import, install');
     process.exit(1);
   }
 } finally {
