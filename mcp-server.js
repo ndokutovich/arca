@@ -142,6 +142,9 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
           project: { type: 'string', description: 'Filter by project substring' },
           limit: { type: 'number', minimum: 1, maximum: 100, default: 20 },
         },
+        // The handler cannot do anything without a query; declaring it
+        // optional made an empty call a runtime error instead of a schema one.
+        required: ['query'],
         additionalProperties: false,
       },
       annotations: { title: 'Essence Search', readOnlyHint: true, idempotentHint: true, openWorldHint: false },
@@ -262,7 +265,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         required: ['subject', 'predicate', 'object'],
         additionalProperties: false,
       },
-      annotations: { title: 'KG Add', readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+      annotations: { title: 'KG Add', readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
     },
     {
       name: 'kg_invalidate',
@@ -278,7 +281,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         },
         additionalProperties: false,
       },
-      annotations: { title: 'KG Invalidate', readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+      annotations: { title: 'KG Invalidate', readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
     },
     {
       name: 'observation_add',

@@ -94,6 +94,12 @@ function* streamArrayObjects(filePath) {
       // never grows past a single conversation.
       if (depth === 0) { buf = ''; scanned = 0; }
     }
+    // A file cut short mid-array leaves the scanner inside an object or a
+    // string. Reporting that as a clean import silently drops the conversation
+    // it stopped in — and every one after it, if the truncation is early.
+    if (depth !== 0 || inString) {
+      throw new Error(`${filePath} ends inside a JSON value — the export looks truncated`);
+    }
   } finally {
     fs.closeSync(fd);
   }
@@ -212,22 +218,34 @@ export function runImport(src, { dryRun = false, keepTemp = false, log = console
   if (zips.length) {
     work = fs.mkdtempSync(path.join(os.tmpdir(), 'claude-ai-export-'));
     for (const z of zips) {
-      execFileSync('unzip', ['-q', '-o', path.join(src, z), '-d', work], { stdio: 'ignore' });
+      try {
+        execFileSync('unzip', ['-q', '-o', path.join(src, z), '-d', work], { stdio: 'ignore' });
+      } catch (e) {
+        throw new Error(
+          `could not run unzip on ${z}. arca shells out to unzip, which a plain Windows install does not have — ` +
+          `extract the export yourself and pass the directory instead. (${(e && e.message) || e})`
+        );
+      }
     }
     log(`extracted ${zips.length} archive(s) to ${work}`);
   }
 
   const stats = { conversations: 0, created: 0, updated: 0, unchanged: 0, empty: 0, unreadable: 0 };
 
-  const convFile = path.join(work, 'conversations.json');
-  if (fs.existsSync(convFile)) {
-    log('reading conversations.json...');
-    importConversations(convFile, stats, dryRun);
-  }
-  importDesignChats(path.join(work, 'design_chats'), stats, dryRun);
-
-  if (work !== src && !keepTemp) {
-    try { fs.rmSync(work, { recursive: true, force: true }); } catch (_) {}
+  try {
+    const convFile = path.join(work, 'conversations.json');
+    if (fs.existsSync(convFile)) {
+      log('reading conversations.json...');
+      importConversations(convFile, stats, dryRun);
+    }
+    importDesignChats(path.join(work, 'design_chats'), stats, dryRun);
+  } finally {
+    // An export is a full copy of someone's conversation history. Leaving it
+    // unpacked in the temp directory because the parse threw is the one case
+    // where cleanup matters most.
+    if (work !== src && !keepTemp) {
+      try { fs.rmSync(work, { recursive: true, force: true }); } catch (_) { /* best effort */ }
+    }
   }
 
   return stats;

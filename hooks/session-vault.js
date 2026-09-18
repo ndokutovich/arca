@@ -78,12 +78,38 @@ function note(msg) {
 
 // A hook killed mid-commit leaves .git/index.lock, silently breaking all future
 // commits. Clear it if stale (older than 30s — no real git runs that long here).
+// A lock older than half a minute used to be deleted outright. On a vault with
+// thousands of files a legitimate `git add` can take longer than that, and two
+// hooks starting together could each decide the other's live lock was stale —
+// removing it mid-write is how an index gets corrupted. Wait for it instead,
+// and only break one that is old enough that no plausible operation is still
+// running behind it.
+const LOCK_WAIT_MS = 15_000;
+const LOCK_BREAK_MS = 10 * 60_000;
+
 function clearStaleLock() {
   const lock = path.join(VAULT_DIR, '.git', 'index.lock');
-  try {
-    const age = Date.now() - fs.statSync(lock).mtimeMs;
-    if (age > 30_000) fs.unlinkSync(lock);
-  } catch { /* no lock — fine */ }
+  const deadline = Date.now() + LOCK_WAIT_MS;
+
+  for (;;) {
+    let age;
+    try {
+      age = Date.now() - fs.statSync(lock).mtimeMs;
+    } catch {
+      return; // no lock at all, which is the common case
+    }
+    if (age > LOCK_BREAK_MS) {
+      try { fs.unlinkSync(lock); note(`broke a git lock ${Math.round(age / 60000)} min old`); } catch { /* raced */ }
+      return;
+    }
+    if (Date.now() >= deadline) {
+      note('git index.lock still held; skipping the commit this run');
+      throw new Error('vault git index is locked');
+    }
+    // Busy-wait briefly: this runs at SessionStart and must not stall it.
+    const until = Date.now() + 250;
+    while (Date.now() < until) { /* spin */ }
+  }
 }
 
 // The search index (index/vault.db) is a large, rebuildable derivative — never
