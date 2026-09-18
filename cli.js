@@ -136,7 +136,7 @@ try {
       const r = restoreSession(id, { force: !!flags.force });
       console.log(`Restored ${r.id} into ${r.project}`);
       console.log(`  ${r.to}`);
-      if (r.overwrote) console.log('  (overwrote the live transcript)');
+      if (r.overwrote) console.log(`  (overwrote the live transcript; the replaced copy is at ${r.preserved})`);
       if (r.note) console.log(`  note: ${r.note}`);
       console.log('\nIt will appear in `claude --resume` for that project.');
     }
