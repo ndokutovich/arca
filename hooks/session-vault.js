@@ -112,16 +112,31 @@ function clearStaleLock() {
   }
 }
 
-// The search index (index/vault.db) is a large, rebuildable derivative — never
-// commit it. Written on init so re-created vaults stay clean.
+// Everything derived or local, which is everything that must never reach a
+// remote: the search index, the 90 MB embedding model, logs, and the file
+// naming which machine this is — if that one travelled, a pull would tell the
+// other machine it was this one.
+const IGNORED = [
+  'index/', '.cache/', 'models/', '*.tmp', '*.log', '.arca/this-machine', '.arca/adopted',
+];
+
 function ensureGitignore() {
   const gi = path.join(VAULT_DIR, '.gitignore');
-  if (!fs.existsSync(gi)) {
-    try { fs.writeFileSync(gi, 'index/\n*.tmp\nvault.log\n'); } catch {}
-  }
+  let current = '';
+  try { current = fs.readFileSync(gi, 'utf8'); } catch { /* absent */ }
+  const have = new Set(current.split(String.fromCharCode(10)).map((l) => l.trim()));
+  const missing = IGNORED.filter((rule) => !have.has(rule));
+  if (!missing.length) return;
+  // Append rather than rewrite: a vault may have rules of its own.
+  try {
+    const sep = current && !current.endsWith(String.fromCharCode(10)) ? String.fromCharCode(10) : '';
+    fs.appendFileSync(gi, sep + missing.join(String.fromCharCode(10)) + String.fromCharCode(10));
+  } catch { /* the hook must not fail over a gitignore */ }
 }
 
-function backup() {
+// Async only because the machine manifest is an ESM module loaded on demand;
+// everything else here is deliberately synchronous.
+async function backup() {
   if (!fs.existsSync(PROJECTS_DIR)) return;
   if (!fs.existsSync(VAULT_DIR)) fs.mkdirSync(VAULT_DIR, { recursive: true });
   // Tie the repo to .git, not to the directory. Opening the index creates
@@ -193,6 +208,24 @@ function backup() {
     }
   }
 
+  // Name this machine as the origin of what it just archived, before the
+  // commit, so the claim travels in the same commit as the transcript. Two
+  // vaults merged later can then still say which machine each session came
+  // from, which is the only thing a pull cannot work out for itself.
+  //
+  // Best effort: an unwritable manifest must not cost the archive.
+  if (copiedFiles.length > 0) {
+    try {
+      const { claim } = await import(path.join(vaultMemoryDir(), 'lib', 'machine.js'));
+      claim(copiedFiles.map((f) => ({
+        session: path.basename(f, '.jsonl'),
+        project: path.basename(path.dirname(f)),
+      })));
+    } catch (e) {
+      note('machine claim skipped: ' + ((e && e.message) || e));
+    }
+  }
+
   // Commit whenever the repository is dirty, not only when this run copied
   // something. A commit that failed once used to strand its transcripts
   // outside git indefinitely: the next run skipped the already-copied files,
@@ -240,7 +273,7 @@ function backup() {
 }
 
 try {
-  backup();
+  await backup();
 } catch (e) {
   // Never break session start — but never vanish either. Claude Code shows
   // nothing when a hook fails, so the log is the only place a failure can

@@ -194,6 +194,36 @@ const COMMANDS = {
       dbModule = await lazy.db();
       const s = dbModule.getStats();
       console.log(`arca index: ${s.exchanges} exchanges, ${s.projects} projects, ${s.files} files`);
+      const layers = [
+        ['essence extracts', s.essence_extracts],
+        ['entities', `${s.entities} (${s.cross_project_entities} cross-project)`],
+        ['kg triples', `${s.kg_triples} (${s.kg_current} current)`],
+        ['observations', s.observations],
+        ['threads', `${s.threads} (${s.cross_session_threads} cross-session)`],
+        ['system noise', s.system_noise],
+      ];
+      console.log('');
+      for (const [name, value] of layers) console.log(`  ${name.padEnd(18)} ${value}`);
+
+      if (s.machines?.length) {
+        console.log('');
+        console.log('  machines');
+        for (const m of s.machines) {
+          const who = m.machine || '(unclaimed)';
+          console.log(`    ${who.padEnd(16)} ${String(m.count).padStart(7)} exchanges  ${m.projects} projects`);
+        }
+      }
+      if (s.shared_projects?.length) {
+        // Not a warning. Project names come from filesystem paths, so the same
+        // name on two machines is ordinary — it is only worth saying out loud,
+        // because a search across both will mix them without mentioning it.
+        console.log('');
+        console.log(`  ${s.shared_projects.length} project name(s) appear on more than one machine:`);
+        for (const p of s.shared_projects.slice(0, 10)) {
+          console.log(`    ${p.project}  (${p.machines} machines)`);
+        }
+        if (s.shared_projects.length > 10) console.log(`    ... and ${s.shared_projects.length - 10} more`);
+      }
     },
   },
 
@@ -362,6 +392,71 @@ const COMMANDS = {
       if (!dryRun && (s.created || s.updated)) {
         console.log('Run `arca index` to fold them into the index.');
       }
+    },
+  },
+
+  machines: {
+    summary: 'which machine each session came from',
+    usage: 'arca machines [--adopt]',
+    detail: [
+      'The vault is a git repository, so a second machine folds in with a pull.',
+      'What a pull cannot say is which machine a session came from — and two',
+      'machines can hold projects with the same directory name that are not the',
+      'same project at all.',
+      '',
+      'Each machine writes one append-only manifest naming the sessions it',
+      'produced, and only ever its own, so two vaults merge without a conflict',
+      'and nothing is renamed to make room.',
+      '',
+      '--adopt claims every session no manifest covers yet. Run it on each',
+      'machine BEFORE adding a remote: afterwards, sessions pulled from',
+      'elsewhere are indistinguishable from your own and adopting would put',
+      'your name on them.',
+    ],
+    flags: { adopt: { boolean: true, describe: 'claim every unclaimed session as this machine' } },
+    examples: ['arca machines', 'arca machines --adopt'],
+    async run({ flags }) {
+      const M = await import('./lib/machine.js');
+      const { walkTranscripts, vaultDir } = await import('./lib/transcripts.js');
+
+      if (flags.adopt) {
+        const r = M.adopt((root) => walkTranscripts(root).map((t) => ({
+          session: t.id,
+          project: t.project,
+        })));
+        if (r.foreign && !r.alreadyDone) {
+          console.log(`Careful: ${r.foreign} other machine(s) have already written here.`);
+          console.log('Only sessions no manifest covered were claimed.');
+        }
+        console.log(r.adopted
+          ? `Claimed ${r.adopted} session(s) for this machine.`
+          : 'Nothing to claim — every session already has a machine.');
+        if (r.alreadyDone) console.log('(this vault had been adopted before)');
+      }
+
+      // Label the index too, where it exists. Driven off session id, so this
+      // also catches sessions a pull brought in with someone else's manifest.
+      try {
+        dbModule = await lazy.db();
+        const labelled = dbModule.syncMachines(M.owners());
+        if (labelled) console.log(`Labelled ${labelled} exchange(s) in the index.`);
+      } catch { /* the manifest is the record; the index is derived */ }
+
+      const rows = M.machines();
+      if (!rows.length) {
+        console.log('No machine has claimed anything yet. Run `arca machines --adopt`.');
+        return;
+      }
+      const self = M.machineId();
+      const unowned = walkTranscripts(vaultDir()).length - [...M.owners().keys()].length;
+      console.log('');
+      for (const m of rows) {
+        const mark = m.id === self ? '*' : ' ';
+        const when = m.created ? m.created.slice(0, 10) : '';
+        console.log(`${mark} ${m.id}  ${String(m.sessions).padStart(6)} sessions  ${m.hostname} ${m.platform} ${when}`);
+      }
+      console.log('');
+      console.log(`* this machine${unowned > 0 ? `   ·   ${unowned} session(s) unclaimed` : ''}`);
     },
   },
 
