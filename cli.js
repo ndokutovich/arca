@@ -122,13 +122,14 @@ try {
       console.log('\nIt will appear in `claude --resume` for that project.');
     }
   } else if (cmd === 'install') {
-    const r = install({ dryRun: args.includes('--dry-run') });
+    const r = install({ dryRun: args.includes('--dry-run'), seed: !args.includes('--no-seed') });
     const tag = r.dryRun ? '[dry-run] ' : '';
     console.log(`${tag}arca at ${r.root}`);
     console.log(`${tag}settings.json: ${r.settings}`);
     console.log(`${tag}mcp config:    ${r.mcp}`);
     console.log(`${tag}files:         ${r.files.length ? r.files.join(', ') : 'all current'}`);
     for (const b of r.backups) console.log(`  backed up: ${b}`);
+    if (r.seeded) console.log(`${tag}seed:          ${r.seeded}`);
     if (r.dryRun) console.log('\nNothing was written. Run without --dry-run to apply.');
   } else if (cmd === 'stats') {
     dbModule = await lazy.db();

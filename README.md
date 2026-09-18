@@ -95,6 +95,7 @@ explicitly if you want it back anyway.
 
 ```bash
 arca install             # register the hook, the MCP server, the skills
+arca install --no-seed   # skip the one-time backfill of existing sessions
 arca install --dry-run   # show what it would change, write nothing
 ```
 

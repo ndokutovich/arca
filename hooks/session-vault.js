@@ -19,9 +19,14 @@
  * Timeout: 30s in settings.json (plenty for copy + commit).
  */
 
-const fs = require('fs');
-const path = require('path');
-const { execFileSync } = require('child_process');
+import fs from 'fs';
+import path from 'path';
+import { execFileSync, spawn } from 'child_process';
+import { fileURLToPath } from 'url';
+
+// vaultMemoryDir() builds three of its six search candidates on __dirname,
+// which ESM does not provide.
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const HOME = process.env.HOME || process.env.USERPROFILE;
 const PROJECTS_DIR = path.join(HOME, '.claude', 'projects');
@@ -87,11 +92,16 @@ function ensureGitignore() {
 
 function backup() {
   if (!fs.existsSync(PROJECTS_DIR)) return;
-  if (!fs.existsSync(VAULT_DIR)) {
-    fs.mkdirSync(VAULT_DIR, { recursive: true });
-    gitExec(['init']);
-    gitExec(['config', 'user.name', 'session-vault']);
-    gitExec(['config', 'user.email', 'vault@local']);
+  if (!fs.existsSync(VAULT_DIR)) fs.mkdirSync(VAULT_DIR, { recursive: true });
+  // Tie the repo to .git, not to the directory. Opening the index creates
+  // VAULT_DIR for index/vault.db, so keying on the directory meant init
+  // never ran and every later commit failed with 'git add' on no repo.
+  if (!fs.existsSync(path.join(VAULT_DIR, '.git'))) {
+    try {
+      gitExec(['init']);
+      gitExec(['config', 'user.name', 'session-vault']);
+      gitExec(['config', 'user.email', 'vault@local']);
+    } catch (e) { note('git init failed: ' + ((e && e.message) || e)); }
   }
   ensureGitignore();
 
@@ -167,11 +177,12 @@ function backup() {
   } catch {}
 
   // Trigger arca incremental indexing for copied files (fire-and-forget)
-  if (copiedFiles.length > 0) {
+  // ARCA_HOOK_NO_INDEX lets the hook's own test exercise copy + commit
+  // without spawning the indexer, which would pull the embedding model.
+  if (copiedFiles.length > 0 && !process.env.ARCA_HOOK_NO_INDEX) {
     try {
       const vm = vaultMemoryDir();
       if (vm) {
-        const { spawn } = require('child_process');
         const fire = (script, args) => {
           const target = path.join(vm, script);
           if (!fs.existsSync(target)) { note('missing ' + script); return; }
@@ -190,4 +201,9 @@ function backup() {
 
 try {
   backup();
-} catch { /* never break session start */ }
+} catch (e) {
+  // Never break session start — but never vanish either. Claude Code shows
+  // nothing when a hook fails, so the log is the only place a failure can
+  // surface. Swallowing it here is what let an ESM/CJS mismatch run silent.
+  try { note('hook failed: ' + ((e && e.stack) || e)); } catch {}
+}
