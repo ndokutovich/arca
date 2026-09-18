@@ -13,7 +13,7 @@
  *   node build-entities.js --quiet
  */
 
-import { getDb, closeDb, upsertEntityMentions, recomputeEntityAggregates } from './lib/db.js';
+import { transaction, getDb, closeDb, upsertEntityMentions, recomputeEntityAggregates } from './lib/db.js';
 import { extractEntities, mentionSnippet, GAZETTEER } from './lib/entities.js';
 
 const MIN_MENTIONS = 4;       // single-project entities need this many to survive
@@ -85,7 +85,7 @@ function main() {
   // insert failure left the entity layer empty rather than stale. Stale is
   // recoverable; empty is not.
   let written = 0;
-  const tx = db.transaction(() => {
+  const tx = transaction(() => {
     db.exec('DELETE FROM entity_mentions');
     for (const [exId, mentions] of byExchange) {
       upsertEntityMentions(exId, mentions);

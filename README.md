@@ -29,7 +29,8 @@ Plus a small temporal knowledge graph (`x runs_on_port 3001` *since* a date), so
 
 ## Install
 
-Requires Node 22+ and a C toolchain for the native modules.
+Requires Node 22.13+. There is no compiler step: SQLite comes from Node
+itself, and the two remaining native pieces ship prebuilt binaries.
 
 ```bash
 git clone https://github.com/ndokutovich/arca.git
@@ -40,15 +41,12 @@ npm install
 **First run downloads an embedding model** (`@huggingface/transformers`, about 80 MB) into its own cache. It happens once, it takes a while, and nothing works until it
 finishes.
 
-**Use npm 11 or newer.** `better-sqlite3` ships prebuilt binaries for every
-platform this runs on, and npm 11 uses them — no compiler involved. Older npm
-ignores that and builds from source, which is where the toolchain below starts
-to matter. `npm i -g npm@latest` is usually the whole fix.
-
-**The native modules are the fragile part.** `better-sqlite3` and `sqlite-vec` compile
-against your platform. On Windows this means Visual Studio Build Tools; on Linux,
-`build-essential` and `python3`. If `npm install` fails, it will be here, and the error
-will name one of those two packages.
+**Nothing here compiles.** SQLite is Node's own `node:sqlite`, and `sqlite-vec`
+and the ONNX runtime both ship prebuilt binaries. This used to depend on
+`better-sqlite3`, whose prebuilt binary is linked against glibc 2.34 — newer
+than a lot of ARM single-board systems ship, and the failure was an unreadable
+loader error deep inside a dependency. The extension that replaced it needs
+glibc 2.17.
 
 ## Use
 
@@ -188,6 +186,32 @@ characters, so a naive `\bдавай\b` silently matches nothing.
 Nothing is English-only by design — but nothing else is deliberately supported
 yet either. Another language needs its own patterns in `lib/control.js` and
 `lib/essence.js`; the machinery around them is language-agnostic.
+
+## Platforms, and the ARM footnote
+
+All three native pieces ship binaries for linux-arm64 — `better-sqlite3`,
+`sqlite-vec` and the ONNX runtime behind the embeddings — so a Raspberry Pi,
+an OrangePi or an ARM server is a supported target, not a curiosity.
+
+What trips it up is glibc, not the architecture. The prebuilt
+`better-sqlite3` binary is linked against **glibc 2.34**, so a device running
+something older fails at load with `GLIBC_2.33 not found` or similar. Debian 12
+(2.36) and Ubuntu 22.04 (2.35) are fine; Debian 11 and Ubuntu 20.04 (both 2.31)
+are not.
+
+On an older system, build that one module against the glibc you actually have:
+
+```bash
+sudo apt install -y build-essential python3
+cd node_modules/better-sqlite3 && npm run build-release
+```
+
+`build-release` is the package's own escape hatch and forces a source build
+past the bundled binary. Expect several minutes — it compiles SQLite.
+
+One honest expectation: embeddings run on the CPU through ONNX, and a
+single-board computer will index at a fraction of a laptop's pace. Search,
+restore and resurrect are unaffected — they touch no model at all.
 
 ## Your own names
 

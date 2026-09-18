@@ -12,7 +12,7 @@
  *   node build-kg.js --quiet
  */
 
-import { getDb, closeDb, clearAutoTriples, addTriple, kgStats } from './lib/db.js';
+import { transaction, getDb, closeDb, clearAutoTriples, addTriple, kgStats } from './lib/db.js';
 import { extractFacts } from './lib/kg.js';
 
 const METHOD = { runs_on_port: 'auto:port', has_version: 'auto:version', replaced_by: 'auto:transition' };
@@ -58,7 +58,7 @@ function main() {
   // so an interrupted rebuild leaves the old graph rather than no graph.
   let added = 0;
   let removed = 0;
-  db.transaction(() => {
+  transaction(() => {
     removed = clearAutoTriples();
     for (const f of pendingFacts) {
       if (addTriple(f)) added++;
