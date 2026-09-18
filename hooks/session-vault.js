@@ -36,6 +36,11 @@ function gitExec(args) {
   execFileSync('git', args, { cwd: VAULT_DIR, stdio: 'ignore' });
 }
 
+/** Same, but returns stdout — `git status` is useless without it. */
+function gitRead(args) {
+  return execFileSync('git', args, { cwd: VAULT_DIR, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
+}
+
 // Where arca actually lives. The old two-levels-up path only resolved
 // from the source tree; once the hook is deployed to ~/.claude/hooks/ it points
 // at a directory that does not exist -- and existsSync turned that into silence.
@@ -132,15 +137,18 @@ function backup() {
       const dst = path.join(vaultProjDir, file.name);
       const tmp = dst + '.tmp';
 
-      // Skip if already in vault and vault copy is same size or larger
+      // Size is not identity. Transcripts are append-only in normal use, but a
+      // replaced or rewritten one that happens to be the same size or smaller
+      // was skipped forever — and the file's own comment claimed replacements
+      // were detected. Compare size and mtime, and fall back to copying.
       if (fs.existsSync(dst)) {
         try {
           const srcStat = fs.statSync(src);
           const dstStat = fs.statSync(dst);
-          if (dstStat.size >= srcStat.size) {
-            skipped++;
-            continue;
-          }
+          const sameSize = dstStat.size === srcStat.size;
+          const notOlder = dstStat.mtimeMs >= srcStat.mtimeMs;
+          if (sameSize && notOlder) { skipped++; continue; }
+          if (dstStat.size > srcStat.size && notOlder) { skipped++; continue; }
         } catch { /* re-copy on error */ }
       }
 
@@ -159,15 +167,23 @@ function backup() {
     }
   }
 
-  // Git commit if anything changed
-  if (copied > 0) {
-    try {
-      clearStaleLock();
-      const msg = `vault: ${copied} sessions (${new Date().toISOString().slice(0, 19)})`;
+  // Commit whenever the repository is dirty, not only when this run copied
+  // something. A commit that failed once used to strand its transcripts
+  // outside git indefinitely: the next run skipped the already-copied files,
+  // so `copied` stayed 0 and the commit was never retried.
+  try {
+    clearStaleLock();
+    let dirty = '';
+    try { dirty = gitRead(['status', '--porcelain']) || ''; } catch { dirty = ''; }
+    if (dirty.trim()) {
+      const pending = dirty.trim().split(String.fromCharCode(10)).length;
+      const msg = copied > 0
+        ? `vault: ${copied} sessions (${new Date().toISOString().slice(0, 19)})`
+        : `vault: ${pending} pending changes (${new Date().toISOString().slice(0, 19)})`;
       gitExec(['add', '-A']);
       gitExec(['commit', '-m', msg]);
-    } catch (e) { note('git commit failed: ' + ((e && e.message) ? e.message.slice(0, 200) : e)); }
-  }
+    }
+  } catch (e) { note('git commit failed: ' + ((e && e.message) ? e.message.slice(0, 200) : e)); }
 
   // Append to log
   try {
@@ -183,17 +199,15 @@ function backup() {
     try {
       const vm = vaultMemoryDir();
       if (vm) {
-        const fire = (script, args) => {
-          const target = path.join(vm, script);
-          if (!fs.existsSync(target)) { note('missing ' + script); return; }
-          const child = spawn('node', [target, ...args], { stdio: 'ignore', detached: true });
+        // One detached child, which runs the chain in order and waits between
+        // stages. Four detached children raced each other; the ordering this
+        // comment used to claim was never actually enforced.
+        const runner = path.join(__dirname, 'pipeline.js');
+        if (!fs.existsSync(runner)) { note('missing pipeline.js'); }
+        else {
+          const child = spawn('node', [runner, vm, ...copiedFiles], { stdio: 'ignore', detached: true });
           child.unref();
-        };
-        // Exchanges first; the derived layers read what it wrote.
-        fire('index-incremental.js', copiedFiles);
-        fire('build-entities.js', ['--quiet']);
-        fire('build-kg.js', ['--quiet']);
-        fire('build-threads.js', ['--quiet']);
+        }
       }
     } catch (e) { note('indexing spawn failed: ' + ((e && e.message) ? e.message : e)); }
   }
