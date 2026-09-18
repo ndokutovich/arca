@@ -14,6 +14,7 @@
  *   node cli.js restore                            # sessions Claude Code lost
  *   node cli.js restore <id>                       # put one back
  *   node cli.js install [--dry-run]                # register hook, MCP, skills
+ *   node cli.js index [--full]                     # index new exchanges
  *   node cli.js import <export-dir> [--dry-run]    # fold in a claude.ai export
  *   node cli.js resurrect                          # transcripts resume cannot open
  *   node cli.js resurrect <id> [--dry-run]         # fork one from its last compact
@@ -23,6 +24,9 @@ import { listRestorable, restoreSession } from './lib/restore.js';
 import { install } from './lib/install.js';
 import { diagnose, forkSession } from './lib/resurrect.js';
 import { runImport } from './import-claude-ai.js';
+import { spawnSync } from 'child_process';
+import { fileURLToPath } from 'url';
+import nodePath from 'path';
 import fs from 'fs';
 
 // The index pulls in native modules (better-sqlite3, sqlite-vec). `restore` and
@@ -38,15 +42,23 @@ let dbModule = null;
 const args = process.argv.slice(2);
 const cmd = args[0];
 
+// Flags that stand alone. Without this list a bare `--include-imported` was
+// taken as a positional argument and looked up as a session id, and a boolean
+// placed before another option swallowed that option's value.
+const BOOLEAN_FLAGS = new Set([
+  'dry-run', 'force', 'all', 'include-imported', 'keep-temp', 'no-seed', 'full', 'quiet',
+]);
+
 function parseFlags(args) {
   const flags = {};
   const positional = [];
   for (let i = 0; i < args.length; i++) {
-    if (args[i].startsWith('--') && i + 1 < args.length) {
-      flags[args[i].slice(2)] = args[++i];
-    } else {
-      positional.push(args[i]);
-    }
+    const a = args[i];
+    if (!a.startsWith('--')) { positional.push(a); continue; }
+    const name = a.slice(2);
+    if (BOOLEAN_FLAGS.has(name)) { flags[name] = true; continue; }
+    if (i + 1 < args.length && !args[i + 1].startsWith('--')) { flags[name] = args[++i]; continue; }
+    flags[name] = true;
   }
   return { flags, positional };
 }
@@ -101,10 +113,12 @@ try {
       const rows = listRestorable({
         limit: flags.limit ? parseInt(flags.limit) : 20,
         project: flags.project || null,
-        includeImported: args.includes('--include-imported'),
+        includeImported: !!flags['include-imported'],
         db,
       });
-      const total = listRestorable({ limit: 0, db: null, includeImported: args.includes('--include-imported') }).length;
+      // The total must obey the same filters as the rows, or the header promises
+      // sessions the listing does not show.
+      const total = listRestorable({ limit: 0, db: null, project: flags.project || null, includeImported: !!flags['include-imported'] }).length;
       if (!total) {
         console.log('Nothing to restore — every archived session is still in ~/.claude/projects/.');
       } else {
@@ -119,7 +133,7 @@ try {
         console.log(`\nRestore one with:  arca restore <id>`);
       }
     } else {
-      const r = restoreSession(id, { force: args.includes('--force') });
+      const r = restoreSession(id, { force: !!flags.force });
       console.log(`Restored ${r.id} into ${r.project}`);
       console.log(`  ${r.to}`);
       if (r.overwrote) console.log('  (overwrote the live transcript)');
@@ -127,7 +141,8 @@ try {
       console.log('\nIt will appear in `claude --resume` for that project.');
     }
   } else if (cmd === 'install') {
-    const r = install({ dryRun: args.includes('--dry-run'), seed: !args.includes('--no-seed') });
+    const { flags: iflags } = parseFlags(args.slice(1));
+    const r = install({ dryRun: !!iflags['dry-run'], seed: !iflags['no-seed'] });
     const tag = r.dryRun ? '[dry-run] ' : '';
     console.log(`${tag}arca at ${r.root}`);
     console.log(`${tag}settings.json: ${r.settings}`);
@@ -136,6 +151,15 @@ try {
     for (const b of r.backups) console.log(`  backed up: ${b}`);
     if (r.seeded) console.log(`${tag}seed:          ${r.seeded}`);
     if (r.dryRun) console.log('\nNothing was written. Run without --dry-run to apply.');
+  } else if (cmd === 'index') {
+    // Two places told people to run `arca index` and no such command existed.
+    // The indexer is a script with its own lifecycle (it loads the embedding
+    // model), so it runs as a child rather than being pulled into this process.
+    const here = nodePath.dirname(fileURLToPath(import.meta.url));
+    const r = spawnSync(process.execPath, [nodePath.join(here, 'indexer.js'), ...args.slice(1)], {
+      stdio: 'inherit',
+    });
+    process.exitCode = r.status === null ? 1 : r.status;
   } else if (cmd === 'import') {
     const { flags, positional } = parseFlags(args.slice(1));
     const src = positional[0];
@@ -143,8 +167,8 @@ try {
       console.error('usage: arca import <dir-with-export-zips> [--dry-run] [--keep-temp]');
       process.exit(1);
     }
-    const dryRun = args.includes('--dry-run');
-    const stats = runImport(src, { dryRun, keepTemp: args.includes('--keep-temp') });
+    const dryRun = !!flags['dry-run'];
+    const stats = runImport(src, { dryRun, keepTemp: !!flags['keep-temp'] });
     const tag = dryRun ? '[dry-run] ' : '';
     console.log(`${tag}conversations ${stats.conversations}: ${stats.created} new, ${stats.updated} changed, ${stats.unchanged} unchanged, ${stats.empty} empty, ${stats.unreadable} unreadable`);
     if (!dryRun && (stats.created || stats.updated)) {
@@ -154,7 +178,7 @@ try {
     const { flags, positional } = parseFlags(args.slice(1));
     const id = positional[0];
     if (!id) {
-      const all = args.includes('--all');
+      const all = !!flags.all;
       const rows = diagnose({ project: flags.project || null, all });
       if (!rows.length) {
         console.log(all ? 'No transcripts found.' : 'No transcript is large enough to trouble the resume parser.');
@@ -170,7 +194,7 @@ try {
         console.log('Fork one from its last compact boundary with:  arca resurrect <id>');
       }
     } else {
-      const r = await forkSession(id, { dryRun: args.includes('--dry-run') });
+      const r = await forkSession(id, { dryRun: !!flags['dry-run'] });
       const tag = r.dryRun ? '[dry-run] ' : '';
       console.log(`${tag}${r.id} in ${r.project}`);
       console.log(`${tag}  ${r.lines} lines, last compact boundary at ${r.lastBoundary}`);
@@ -190,7 +214,7 @@ try {
     const stats = dbModule.getStats();
     console.log(`arca index: ${stats.exchanges} exchanges, ${stats.projects} projects, ${stats.files} files`);
   } else {
-    console.error('Commands: search, read, stats, restore, resurrect, import, install');
+    console.error('Commands: search, read, stats, index, restore, resurrect, import, install');
     process.exit(1);
   }
 } finally {
