@@ -130,7 +130,9 @@ arca install --no-seed   # skip the one-time backfill of existing sessions
 arca install --dry-run   # show what it would change, write nothing
 ```
 
-The installer merges: it adds only its own entries, backs up
+The installer merges: it adds only its own entries, writes through a
+temporary file and a rename so an interrupted write cannot truncate anything,
+backs up
 `~/.claude/settings.json` and `~/.claude.json` before touching either, and does
 nothing the second time. It never rewrites those files wholesale — they hold
 your permissions, environment and every other hook.
@@ -180,8 +182,8 @@ The layers that classify and extract work on Russian as well as English, because
 that is what the corpus they were built against looks like. Prompt
 classification recognises Russian go-aheads and approvals; essence extraction
 picks up decisions and constraints phrased in Russian; and the word-boundary
-helper exists because JavaScript's `` does not treat Cyrillic as word
-characters, so a naive `давай` silently matches nothing.
+helper exists because JavaScript's `\b` does not treat Cyrillic as word
+characters, so a naive `\bдавай\b` silently matches nothing.
 
 Nothing is English-only by design — but nothing else is deliberately supported
 yet either. Another language needs its own patterns in `lib/control.js` and
@@ -236,7 +238,7 @@ distinguishable.
 npm test
 ```
 
-24 tests over the parsing, entity, KG and thread layers. No network, no database.
+44 tests over the parsing, entity, KG and thread layers. No network, no database.
 
 ## Scale
 

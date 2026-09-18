@@ -10,7 +10,8 @@
 import fs from 'fs';
 import path from 'path';
 import { parseTranscript } from './lib/parser.js';
-import { getDb, closeDb, getIndexedIds, upsertExchange } from './lib/db.js';
+import { extractExchangeEssence } from './lib/essence.js';
+import { getDb, closeDb, getIndexedIds, upsertExchange, upsertEssence } from './lib/db.js';
 import { embedExchange, initEmbeddings } from './lib/embeddings.js';
 
 const args = process.argv.slice(2);
@@ -44,14 +45,24 @@ try {
       const toolNames = exchange.toolCalls?.map(t => t.toolName);
       const embedding = await embedExchange(exchange.userMessage, exchange.assistantMessage, toolNames);
       upsertExchange(exchange, embedding);
+      // The full indexer writes the essence layer here too. Leaving it out
+      // meant every exchange the hook indexed had no decisions, constraints or
+      // tensions extracted — the layer was silently only as current as the
+      // last full re-index.
+      upsertEssence(exchange.id, exchange.project, extractExchangeEssence(exchange));
       totalIndexed++;
     }
   }
 
-  closeDb();
   if (totalIndexed > 0) {
     console.error(`arca: indexed ${totalIndexed} new exchanges from ${files.length} files`);
   }
 } catch (err) {
+  // The hook's pipeline decides whether to rebuild the derived layers from
+  // this run's exit status, so reporting failure as success let it rebuild
+  // entities, the graph and threads from a half-written index.
   console.error('arca index error:', err.message);
+  process.exitCode = 1;
+} finally {
+  try { closeDb(); } catch { /* already closed or never opened */ }
 }

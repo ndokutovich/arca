@@ -19,7 +19,7 @@ You are searching historical Claude Code conversations for relevant context.
 
 Run via Bash (stderr suppressed to hide model loading):
 ```bash
-cd /path/to/arca && node cli.js search "your query" --limit 10 2>/dev/null
+arca search "your query" --limit 10 2>/dev/null
 ```
 
 Multi-concept AND search (all terms must appear in same conversation):
