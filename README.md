@@ -40,6 +40,11 @@ npm install
 **First run downloads an embedding model** (`@huggingface/transformers`, about 80 MB) into its own cache. It happens once, it takes a while, and nothing works until it
 finishes.
 
+**Use npm 11 or newer.** `better-sqlite3` ships prebuilt binaries for every
+platform this runs on, and npm 11 uses them — no compiler involved. Older npm
+ignores that and builds from source, which is where the toolchain below starts
+to matter. `npm i -g npm@latest` is usually the whole fix.
+
 **The native modules are the fragile part.** `better-sqlite3` and `sqlite-vec` compile
 against your platform. On Windows this means Visual Studio Build Tools; on Linux,
 `build-essential` and `python3`. If `npm install` fails, it will be here, and the error
