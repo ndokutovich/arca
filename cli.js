@@ -188,7 +188,7 @@ try {
   } else if (cmd === 'stats') {
     dbModule = await lazy.db();
     const stats = dbModule.getStats();
-    console.log(`Vault Memory Index: ${stats.exchanges} exchanges, ${stats.projects} projects, ${stats.files} files`);
+    console.log(`arca index: ${stats.exchanges} exchanges, ${stats.projects} projects, ${stats.files} files`);
   } else {
     console.error('Commands: search, read, stats, restore, resurrect, import, install');
     process.exit(1);

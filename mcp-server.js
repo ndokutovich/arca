@@ -18,6 +18,8 @@ import {
   ListToolsRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js';
 import fs from 'fs';
+import nodePath from 'path';
+import { vaultDir, projectsDir } from './lib/transcripts.js';
 import {
   search,
   searchMultiConcept,
@@ -85,7 +87,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         additionalProperties: false,
       },
       annotations: {
-        title: 'Search Vault Memory',
+        title: 'Search arca',
         readOnlyHint: true,
         destructiveHint: false,
         idempotentHint: true,
@@ -414,17 +416,33 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
     if (name === 'read') {
       const { path: filePath, startLine, endLine } = args;
-      if (!fs.existsSync(filePath)) {
+      // Confine reads to the transcript trees. This tool exists to open a
+      // conversation the index pointed at, and an MCP tool that will read any
+      // absolute path is a file-disclosure primitive for whatever can influence
+      // the caller's input. Both roots are legitimate: search returns archive
+      // paths, and a live session under ~/.claude/projects is the same kind of
+      // file. Anything else is refused by name rather than silently emptied.
+      const resolved = nodePath.resolve(filePath);
+      const roots = [vaultDir(), projectsDir()].map((r) => nodePath.resolve(r));
+      const inside = roots.some(
+        (root) => resolved === root || resolved.startsWith(root + nodePath.sep)
+      );
+      if (!inside) {
+        throw new Error(
+          `Refusing to read outside the vault: ${filePath}. arca reads transcripts under ${roots.join(' or ')}.`
+        );
+      }
+      if (!fs.existsSync(resolved)) {
         throw new Error(`File not found: ${filePath}`);
       }
-      const markdown = showConversation(filePath, startLine, endLine);
+      const markdown = showConversation(resolved, startLine, endLine);
       return { content: [{ type: 'text', text: markdown }] };
     }
 
     if (name === 'stats') {
       const stats = getStats();
       const lines = [
-        'Vault Memory Index:',
+        'arca index:',
         `- ${stats.exchanges} exchanges`,
         `- ${stats.projects} projects`,
         `- ${stats.files} session files`,

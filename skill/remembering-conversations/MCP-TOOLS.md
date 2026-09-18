@@ -1,4 +1,4 @@
-# Vault Memory MCP Tools Reference
+# arca MCP Tools Reference
 
 ## search
 
