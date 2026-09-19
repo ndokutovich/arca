@@ -260,6 +260,7 @@ cannot be resumed as one.
 | `opencode` | a real corpus, 120 sessions across 11,167 files |
 | `gemini` | a real corpus, 10 sessions |
 | `antigravity` | a real corpus, 2 sessions |
+| `cline` | a real corpus, 2 tasks |
 
 Antigravity is the one that is not a translation. It never writes its replies
 to disk — its transcript holds the request, the model's private reasoning and
@@ -269,8 +270,8 @@ reasoning is never passed off as the reply, and a session that kept its
 documents but no transcript gets a line that reads as a label rather than an
 invented question.
 
-Five more are known and not yet written: Cursor, Aider, Cline, ForgeCode,
-and Claude Code itself as an explicit adapter. An adapter that has
+Four more are known and not yet written: Cursor, Aider, ForgeCode, and
+Claude Code itself as an explicit adapter. An adapter that has
 never been run against a real file says so in `arca sources`, because a parser
 built from a format description is a claim, not a result — and Gemini is the
 reason that matters: its own shipped fixtures describe a message shape the CLI
@@ -475,7 +476,7 @@ against your own transcripts.
 npm test
 ```
 
-171 tests over parsing, the tokenizer, the CLI, the hook, machine manifests,
+183 tests over parsing, the tokenizer, the CLI, the hook, machine manifests,
 prompt history, the claude.ai importer, source adapters, restore's refusal to
 offer what it cannot restore, the model cache, path confinement, and the
 entity, KG and thread layers. No network, no database.
