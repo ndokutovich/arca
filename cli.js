@@ -776,7 +776,9 @@ const COMMANDS = {
         const root = vaultDir();
         let seen = 0;
         const hits = scanTree(root, {
-          skip: (name) => name === '.git' || name === 'index' || name === '.cache',
+          // arca's own artifacts: the git objects, the SQLite index and the
+          // 90 MB embedding model. None of them is text anyone wrote.
+          skip: (name) => name === '.git' || name === 'index' || name === '.cache' || name === 'models',
           onFile: () => { seen++; },
         });
         console.log(`Scanned ${seen} file(s) in ${root}`);

@@ -154,7 +154,10 @@ function clearStaleLock() {
 // naming which machine this is — if that one travelled, a pull would tell the
 // other machine it was this one.
 const IGNORED = [
-  'index/', '.cache/', 'models/', '*.tmp', '*.log',
+  // *.tmp-* is the half-written file an interrupted copy leaves behind. It
+  // is skipped when reading the vault back, so nothing ever removes it, and
+  // `git add -A` would commit it forever.
+  'index/', '.cache/', 'models/', '*.tmp', '*.tmp-*', '*.log',
   '.arca/this-machine', '.arca/adopted',
   // Which assistants this machine reads. Two machines hold different ones and
   // can want different answers; a choice made here must not arrive there.
@@ -344,6 +347,11 @@ async function backup() {
         ? `vault: ${copied} sessions (${new Date().toISOString().slice(0, 19)})`
         : `vault: ${pending} pending changes (${new Date().toISOString().slice(0, 19)})`;
       gitExec(['add', '-A']);
+      // The vault ignores index/, models/, *.tmp and *.log for its own
+      // artifacts, and those names are ordinary inside somebody's skills.
+      // Without -f a captured file can be copied and then silently never
+      // committed, which is the one thing a backup must not do.
+      try { gitExec(['add', '-f', 'config']); } catch { /* no config copy yet */ }
       gitExec(['commit', '-m', msg]);
     }
   } catch (e) { note('git commit failed: ' + ((e && e.message) ? e.message.slice(0, 200) : e)); }
