@@ -114,6 +114,7 @@ function num(value, name) {
 // Shared flag shapes, so the same option reads the same way everywhere.
 const F = {
   project: { value: 'NAME', describe: 'only this project' },
+  source: { value: 'ID', describe: 'only this assistant (see `arca sources`)' },
   limit: { value: 'N', describe: 'how many to show' },
   dryRun: { boolean: true, describe: 'show what would happen, write nothing' },
 };
@@ -135,6 +136,7 @@ const COMMANDS = {
       after: { value: 'YYYY-MM-DD', describe: 'only after this date' },
       before: { value: 'YYYY-MM-DD', describe: 'only before this date' },
       project: F.project,
+      source: F.source,
     },
     examples: [
       'arca search "why did we drop better-sqlite3"',
@@ -153,6 +155,7 @@ const COMMANDS = {
         after: flags.after,
         before: flags.before,
         project: flags.project,
+        source: flags.source,
       };
       const S = await lazy.search();
       if (positional.length >= 2) {
@@ -209,6 +212,14 @@ const COMMANDS = {
       ];
       console.log('');
       for (const [name, value] of layers) console.log(`  ${name.padEnd(18)} ${value}`);
+
+      if (s.sources?.length > 1) {
+        console.log('');
+        console.log('  assistants');
+        for (const r of s.sources) {
+          console.log(`    ${(r.source || '(unknown)').padEnd(14)} ${String(r.count).padStart(7)} exchanges  ${r.sessions} sessions`);
+        }
+      }
 
       if (s.machines?.length) {
         console.log('');
@@ -481,6 +492,81 @@ const COMMANDS = {
       }
       console.log('');
       console.log('! = no surviving session for this prompt');
+    },
+  },
+
+  sources: {
+    summary: 'history from other assistants, not just Claude Code',
+    usage: 'arca sources [--import] [options]',
+    detail: [
+      'The engine underneath arca never knew what Claude Code was — it takes',
+      'text and gives back ranked text. Only the way in was Claude-shaped.',
+      '',
+      'A source adapter finds another assistant\'s sessions and converts them',
+      'into the same archive format, so search, essence, entities and threads',
+      'all see them with no special case. Imported sessions share the project',
+      'directory of the Claude Code sessions run in the same place, because',
+      'they are the same project.',
+      '',
+      'They mix into ordinary search; `--source <id>` narrows to one.',
+      '',
+      'An adapter marked "fixtures" has never been run against a real file on',
+      'this machine — it is built from the format, not from your data.',
+    ],
+    flags: {
+      import: { boolean: true, describe: 'fold detected sessions into the vault' },
+      only: { value: 'ID', describe: 'just this source' },
+      'dry-run': F.dryRun,
+      force: { boolean: true, describe: 're-read sessions even if unchanged' },
+    },
+    examples: [
+      'arca sources',
+      'arca sources --import --dry-run',
+      'arca sources --import --only codex',
+    ],
+    async run({ flags }) {
+      const S = await import('./lib/sources/index.js');
+      const only = flags.only || null;
+      if (only && !S.byId(only)) {
+        fail(`no source called "${only}" (have: ${S.ADAPTERS.map((a) => a.id).join(', ')})`);
+      }
+
+      const found = S.detectAll().filter((d) => !only || d.id === only);
+      if (!flags.import) {
+        console.log('');
+        for (const d of found) {
+          const mark = d.present ? '*' : ' ';
+          const where = d.present ? d.root : 'not on this machine';
+          const proof = d.verifiedAgainst === 'live' ? '' : '   (built from fixtures, never run on real data here)';
+          console.log(`${mark} ${d.id.padEnd(12)} ${d.label.padEnd(16)} ${where}${proof}`);
+          if (d.note) console.log(`    ${d.note}`);
+        }
+        console.log('');
+        console.log(`* detected   ·   fold them in with:  arca sources --import`);
+        return;
+      }
+
+      const dryRun = !!flags['dry-run'];
+      const tag = dryRun ? '[dry-run] ' : '';
+      let any = false;
+      for (const d of found) {
+        if (!d.present) continue;
+        any = true;
+        const adapter = S.byId(d.id);
+        const t0 = Date.now();
+        const s = S.importSource(adapter, { dryRun, force: !!flags.force, log: (m) => console.error(m) });
+        const secs = ((Date.now() - t0) / 1000).toFixed(1);
+        console.log(`${tag}${d.id}: ${s.conversations} session(s) — ${s.created} new, ${s.updated} changed, `
+          + `${s.unchanged} unchanged, ${s.empty} empty, ${s.unreadable} unreadable  (${secs}s)`);
+      }
+      if (!any) {
+        console.log('Nothing detected on this machine.');
+        return;
+      }
+      if (!dryRun) {
+        console.log('');
+        console.log('Run `arca index` to fold them into the index.');
+      }
     },
   },
 

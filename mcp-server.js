@@ -78,6 +78,10 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
             type: 'string',
             description: 'Filter by project directory name',
           },
+          source: {
+            type: 'string',
+            description: 'Only one assistant: claude_code, claude_ai, codex, … Omit to search every one of them.',
+          },
           response_format: {
             type: 'string',
             enum: ['markdown', 'json'],
@@ -420,17 +424,17 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const { name, arguments: args } = request.params;
 
     if (name === 'search') {
-      const { query, mode = 'both', limit = 10, after, before, project, response_format = 'markdown' } = args;
+      const { query, mode = 'both', limit = 10, after, before, project, source, response_format = 'markdown' } = args;
 
       let resultText;
 
       if (Array.isArray(query)) {
-        const results = await searchMultiConcept(query, { limit, after, before, project });
+        const results = await searchMultiConcept(query, { limit, after, before, project, source });
         resultText = response_format === 'json'
           ? JSON.stringify({ results, count: results.length, concepts: query }, null, 2)
           : formatMultiConceptMarkdown(results, query);
       } else {
-        const results = await search(query, { limit, mode, after, before, project });
+        const results = await search(query, { limit, mode, after, before, project, source });
         resultText = response_format === 'json'
           ? JSON.stringify({ results, count: results.length, mode }, null, 2)
           : formatResultsMarkdown(results);

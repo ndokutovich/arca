@@ -85,6 +85,7 @@ arca index --full         # rebuild from every archive, and reconcile
 arca restore              # sessions Claude Code no longer has
 arca resurrect            # transcripts resume cannot open
 arca import <dir>         # fold in a claude.ai export
+arca sources              # history from other assistants
 arca machines             # which machine each session came from
 arca install              # register with Claude Code
 ```
@@ -224,6 +225,44 @@ you typed, so `/effort` would look lost while its whole session sat in the vault
 The file is never copied wholesale — Claude Code rewrites it in place, and a
 plain copy would add a 10 MB blob to the vault on every commit. Only entries past
 the stored watermark are appended.
+
+## More than one assistant
+
+The engine underneath arca never knew what Claude Code was. It takes text and
+gives back ranked text; only the way in was Claude-shaped.
+
+A source adapter finds another assistant's sessions and converts them into the
+same archive format, so search, essence, entities and threads all see them with
+no special case anywhere below.
+
+```bash
+arca sources                     # what is on this machine
+arca sources --import --dry-run  # counts, nothing written
+arca sources --import            # fold them in
+arca index                       # then index as usual
+
+arca search "glibc"              # everything, provenance shown per result
+arca search "glibc" --source codex
+```
+
+Imported sessions land in the **same project directory** as the Claude Code
+sessions run in the same place, because they are the same project — and the
+entity and thread layers are better for seeing both halves of the work. They
+mix into ordinary search; a result from another assistant is labelled, one from
+Claude Code is not, so a single-source vault reads exactly as it did.
+
+`arca restore` never offers them. A session that was not a Claude Code session
+cannot be resumed as one.
+
+| adapter | status |
+|---|---|
+| `codex` | Codex CLI — read against a real 3.3 GB corpus |
+
+Eight more are known and not yet written: Cursor, OpenCode, Gemini CLI, Aider,
+Cline, ForgeCode, Antigravity, and Claude Code itself as an explicit adapter.
+An adapter that has never been run against a real file says so in
+`arca sources`, because a parser built from a format description is a claim,
+not a result.
 
 ## More than one machine
 
@@ -423,9 +462,10 @@ against your own transcripts.
 npm test
 ```
 
-115 tests over parsing, the tokenizer, the CLI, the hook, machine manifests,
-prompt history, the claude.ai importer, the model cache, path confinement, and
-the entity, KG and thread layers. No network, no database.
+139 tests over parsing, the tokenizer, the CLI, the hook, machine manifests,
+prompt history, the claude.ai importer, source adapters, restore's refusal to
+offer what it cannot restore, the model cache, path confinement, and the
+entity, KG and thread layers. No network, no database.
 
 ## Scale
 
