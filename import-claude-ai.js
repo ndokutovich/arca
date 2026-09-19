@@ -10,6 +10,12 @@
  *
  *   conversations.json      -> claude-ai-web/<conversation-uuid>.jsonl
  *   design_chats/<id>.json  -> claude-ai-design-<project-slug>/<id>.jsonl
+ *   projects/<uuid>.json    -> claude-ai-projects/<uuid>.jsonl
+ *
+ * The export arrives as one zip per kind of thing, and it has grown kinds
+ * since this was written. Anything unrecognised is now named in the output
+ * rather than passed over, so a bucket that appears later announces itself
+ * instead of being silently dropped.
  *
  * Idempotent: a conversation whose JSONL is already on disk byte-for-byte is
  * left alone, so re-importing a fresh export only writes what actually changed.
@@ -202,6 +208,39 @@ function importDesignChats(dir, stats, dryRun) {
   }
 }
 
+// A claude.ai Project is not a conversation — it is the standing context the
+// user wrote for one: a description, a prompt template, and knowledge
+// documents. None of it appears in any transcript, and it is often the most
+// deliberate writing in the whole export. Rendered as a one-turn transcript so
+// the rest of the pipeline needs no special case.
+function importProjects(dir, stats, dryRun) {
+  let files = [];
+  try { files = fs.readdirSync(dir).filter((f) => f.endsWith('.json')); } catch (_) { return; }
+  const dest = path.join(VAULT_DIR, 'claude-ai-projects');
+  for (const f of files) {
+    let proj;
+    try { proj = JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8')); } catch (_) { stats.unreadable++; continue; }
+
+    const parts = [];
+    if (proj.description) parts.push('## Description' + NL + NL + proj.description);
+    if (proj.prompt_template) parts.push('## Instructions' + NL + NL + proj.prompt_template);
+    for (const doc of proj.docs || []) {
+      if (!doc || !doc.content) continue;
+      parts.push('## ' + (doc.filename || 'document') + NL + NL + doc.content);
+    }
+
+    stats.conversations++;
+    if (!parts.length) { stats.empty++; continue; }
+
+    const when = proj.created_at || proj.updated_at;
+    const rows = [
+      line('user', 'Project: ' + (proj.name || proj.uuid), when, proj.uuid),
+      line('assistant', parts.join(NL + NL), proj.updated_at || when, proj.uuid),
+    ];
+    writeConversation(dest, proj.uuid, rows, stats, dryRun);
+  }
+}
+
 /**
  * Convert a claude.ai export into vault transcripts.
  * Returns the tally so a caller can report it however it likes.
@@ -239,6 +278,24 @@ export function runImport(src, { dryRun = false, keepTemp = false, log = console
       importConversations(convFile, stats, dryRun);
     }
     importDesignChats(path.join(work, 'design_chats'), stats, dryRun);
+    importProjects(path.join(work, 'projects'), stats, dryRun);
+
+    // Everything the export contained that nothing above reads. users.json and
+    // login_history.json are deliberately skipped -- they are account records,
+    // not history, and one of them holds a phone number. Anything else is a
+    // bucket this importer has not learned yet, and saying so is how the next
+    // one gets noticed.
+    const KNOWN = new Set([
+      'conversations.json', 'design_chats', 'projects',
+      'users.json', 'login_history.json',
+    ]);
+    let present = [];
+    try { present = fs.readdirSync(work); } catch (_) { /* nothing to report */ }
+    const unknown = present.filter((e) => !KNOWN.has(e));
+    if (unknown.length) {
+      stats.unknown = unknown;
+      log('not imported, unrecognised: ' + unknown.join(', '));
+    }
   } finally {
     // An export is a full copy of someone's conversation history. Leaving it
     // unpacked in the temp directory because the parse threw is the one case
