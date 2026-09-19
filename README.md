@@ -466,10 +466,52 @@ The archive is a normal git repository. Back it up, push it somewhere private, o
 logs, and the file naming which machine this is — is ignored, because only the
 transcripts are irreplaceable.
 
+## Where this came from
+
+Three projects, and the first of them is the reason there is a second.
+
+**[episodic-memory](https://github.com/obra/episodic-memory)** — Jesse Vincent,
+MIT. This started as his, and a lot of it still is: the same four dependencies
+(MCP SDK, transformers.js, better-sqlite3, sqlite-vec), the same file layout —
+db, embeddings, indexer, parser, paths, search, show, mcp-server — and `search`
+and `read` matching his down to the parameter names and the values of their
+enums. The line at the top of this README is the name of his project.
+
+It was good at everything I wanted except two things, and both were about what
+a session is made of. Its index keeps which tools ran and what they were given,
+but a `tool_result` block comes back on a user turn and the parser leaves that
+case empty, with a TODO where the handling would go — so what a command
+actually returned is not searchable. And while it does archive the transcript,
+nothing puts one back: there is no restore, so a session Claude Code has
+deleted stays deleted whatever is on disk.
+
+Those two are the whole reason arca exists. Wanting a session back is what put
+the transcripts in git, and once they were in git the rest followed — the
+history of how one changed, restore, resurrect, and the four derived layers
+that had somewhere to be derived from.
+
+**[MemPalace](https://github.com/mempalace/mempalace)** — Milla Jovovich, Ben
+Sigman, Igor Lins e Silva. Read in June 2026 and folded in the same week. Two
+things came from it. Verbatim storage: keep the transcript byte for byte rather
+than a summary of it. And the framing — that the hard part is not storing but
+recalling something half-remembered, "that thing we talked about", which
+keyword search cannot do and which is why half of this search is a vector.
+
+**[claude-mem](https://github.com/thedotmack/claude-mem)** — Alex Newman.
+Installed, used, and measured against more than once. Its answer to the same
+problem is compression: summarise, so the next session starts knowing. arca
+went the other way and keeps everything, and that choice was made against a
+working example of the alternative rather than in the abstract.
+
+This list was recovered using arca. The session where the three were compared
+is gone — its transcript was deleted long before this was written — and what
+survived is the prompts, in `~/.claude/history.jsonl`, which is the argument
+for `arca prompts` in one example.
+
 ## Prior art
 
-Very little here is new. What is new is the combination, and that it runs
-against your own transcripts.
+Very little else here is new either. What is new is the combination, and that
+it runs against your own transcripts.
 
 | | What it contributed |
 |---|---|
