@@ -721,6 +721,146 @@ const COMMANDS = {
     },
   },
 
+  config: {
+    summary: 'keep the agents, skills, commands and settings, not just the talk',
+    usage: 'arca config [--sync] [--restore] [--scan] [options]',
+    detail: [
+      'A transcript says what was done. It does not say what it was done with:',
+      'which agents existed, which skills, which hooks fired, what the settings',
+      'were. Restore a session from six months ago onto a clean machine and it',
+      'reads like instructions to a toolbox that is no longer there.',
+      '',
+      'So the vault takes a copy of ~/.claude as well. It rides in the same git',
+      'repository as the transcripts, which means a snapshot is a commit, the',
+      'history is "git log", and going back is "git checkout" — none of which',
+      'had to be built.',
+      '',
+      'What is copied: CLAUDE.md, settings.json, statusline, agents, commands,',
+      'skills, hooks, the plugin list, and the per-project memory files. What',
+      'is not: credentials, node_modules, audio, logs, the skills Claude Code',
+      'downloads for itself, and the per-session state in plans, tasks and',
+      'todos — that last one is 14,000 files of churn and no configuration.',
+      '',
+      'A file that looks like it holds an API key is left behind and named. To',
+      'keep one anyway, put its path in the allow file this prints.',
+      '',
+      '--restore writes the copy back. It refuses to overwrite anything unless',
+      'you say --force, and even then it keeps the previous file beside the new',
+      'one.',
+      '',
+      '--scan reads the whole vault, transcripts included, and reports what',
+      'looks like a credential. Worth running before adding a git remote: a',
+      'key that was printed during a session is in the archive verbatim.',
+    ],
+    flags: {
+      sync: { boolean: true, describe: 'copy the configuration into the vault now' },
+      restore: { boolean: true, describe: 'write the copy back into ~/.claude' },
+      scan: { boolean: true, describe: 'look for credentials across the whole vault' },
+      force: { boolean: true, describe: 'with --restore, overwrite what is there' },
+      'dry-run': F.dryRun,
+    },
+    examples: [
+      'arca config',
+      'arca config --sync',
+      'arca config --scan',
+      'arca config --restore --dry-run',
+    ],
+    async run({ flags }) {
+      const CV = await import('./lib/config-vault.js');
+      const dryRun = !!flags['dry-run'];
+      const tag = dryRun ? '[dry-run] ' : '';
+
+      if (flags.scan) {
+        const { scanTree } = await import('./lib/secrets.js');
+        const { vaultDir } = await import('./lib/transcripts.js');
+        const root = vaultDir();
+        let seen = 0;
+        const hits = scanTree(root, {
+          skip: (name) => name === '.git' || name === 'index' || name === '.cache',
+          onFile: () => { seen++; },
+        });
+        console.log(`Scanned ${seen} file(s) in ${root}`);
+        if (!hits.length) {
+          console.log('Nothing that looks like a credential.');
+          return;
+        }
+        const rules = new Map();
+        for (const h of hits) for (const f of h.findings) rules.set(f.rule, (rules.get(f.rule) || 0) + 1);
+        console.log(`${hits.length} file(s) hold something that looks like one:`);
+        console.log('');
+        for (const h of hits.slice(0, 40)) {
+          console.log(`  ${h.file}`);
+          for (const f of h.findings.slice(0, 4)) {
+            console.log(`      line ${String(f.line).padStart(5)}  ${f.kind.padEnd(10)} ${f.rule.padEnd(20)} ${f.masked}`);
+          }
+        }
+        if (hits.length > 40) console.log(`  ... and ${hits.length - 40} more`);
+        console.log('');
+        console.log(`by rule: ${[...rules].map(([r, n]) => `${r}=${n}`).join('  ')}`);
+        console.log('');
+        console.log('These are already committed. Rewriting the history of an archive is');
+        console.log('its own kind of loss, so the honest move is usually to rotate the');
+        console.log('credentials and keep the vault private.');
+        return;
+      }
+
+      if (flags.restore) {
+        const r = CV.restore({ dryRun, force: !!flags.force });
+        if (r.empty) {
+          console.log('Nothing to restore — the vault holds no configuration yet.');
+          console.log('Run "arca config --sync" on the machine that has one.');
+          return;
+        }
+        console.log(`${tag}wrote      ${r.written.length}`);
+        console.log(`${tag}identical  ${r.identical}`);
+        console.log(`${tag}in the way ${r.conflicts.length}`);
+        for (const c of r.conflicts.slice(0, 20)) console.log(`    ${c}`);
+        if (r.conflicts.length > 20) console.log(`    ... and ${r.conflicts.length - 20} more`);
+        if (r.conflicts.length && !flags.force) {
+          console.log('');
+          console.log('Those differ from the copy and were left alone. --force replaces them,');
+          console.log('keeping each previous file as <name>.before-arca-restore.');
+        }
+        return;
+      }
+
+      // --sync means now, whatever the cooldown says — and it stamps the
+      // clock, so the hook does not immediately repeat the same pass.
+      const r = flags.sync && !dryRun
+        ? CV.syncIfDue({ cooldownMs: 0 })
+        : CV.sync({ dryRun: true });
+      const changed = r.added.length + r.changed.length + r.removed.length;
+      const total = r.unchanged + r.added.length + r.changed.length;
+      console.log(`${total} file(s), ${(r.bytes / 1048576).toFixed(1)} MB from ${CV.claudeHome()}`);
+      console.log('');
+      console.log(`  added     ${r.added.length}`);
+      console.log(`  changed   ${r.changed.length}`);
+      console.log(`  removed   ${r.removed.length}`);
+      console.log(`  unchanged ${r.unchanged}`);
+
+      if (r.skipped.length) {
+        console.log('');
+        console.log(`${r.skipped.length} file(s) held back — they look like they hold a credential:`);
+        for (const s of r.skipped) {
+          console.log(`  ${s.file}`);
+          for (const f of s.findings.slice(0, 3)) {
+            console.log(`      line ${String(f.line).padStart(5)}  ${f.kind.padEnd(10)} ${f.rule.padEnd(20)} ${f.masked}`);
+          }
+        }
+        console.log('');
+        console.log(`To keep one anyway, add its path to ${CV.allowFile()}`);
+      }
+
+      if (!flags.sync) {
+        console.log('');
+        console.log(changed
+          ? `${changed} file(s) would be copied. Run "arca config --sync" to do it.`
+          : 'Nothing to do — the copy is current.');
+        console.log('The SessionStart hook also does this, so it usually is.');
+      }
+    },
+  },
+
   install: {
     summary: 'register the hook, the MCP server and the skills',
     usage: 'arca install [options]',

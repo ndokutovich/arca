@@ -159,6 +159,8 @@ const IGNORED = [
   // Which assistants this machine reads. Two machines hold different ones and
   // can want different answers; a choice made here must not arrive there.
   '.arca/sources.json',
+  // When the configuration was last copied. Per machine, like the rest.
+  '.arca/config-synced',
 ];
 
 function ensureGitignore() {
@@ -305,6 +307,25 @@ async function backup() {
       if (r.appended) note(`history: +${r.appended} prompt(s)`);
     } catch (e) {
       note('history sync skipped: ' + ((e && e.message) || e));
+    }
+  }
+
+  // The transcript says what was done; this says what it was done with.
+  // Agents, skills, commands, hooks and settings ride in the same commit, so
+  // a session restored a year from now can be read against the toolbox it
+  // actually had. Rate-limited inside: a full pass is a second and a half
+  // and almost always finds nothing.
+  if (arcaDir) {
+    try {
+      const { syncIfDue } = await import(pathToFileURL(path.join(arcaDir, 'lib', 'config-vault.js')).href);
+      const r = syncIfDue();
+      if (r) {
+        const touched = r.added.length + r.changed.length + r.removed.length;
+        if (touched) note(`config: ${r.added.length} new, ${r.changed.length} changed, ${r.removed.length} gone`);
+        if (r.skipped.length) note(`config: ${r.skipped.length} file(s) held back, look like credentials`);
+      }
+    } catch (e) {
+      note('config sync skipped: ' + ((e && e.message) || e));
     }
   }
 

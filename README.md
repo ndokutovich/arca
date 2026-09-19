@@ -87,6 +87,7 @@ arca resurrect            # transcripts resume cannot open
 arca import <dir>         # fold in a claude.ai export
 arca sources              # history from other assistants
 arca machines             # which machine each session came from
+arca config               # keep the agents, skills and settings too
 arca install              # register with Claude Code
 ```
 
@@ -322,6 +323,80 @@ name on them. A session another machine has claimed is never taken.
 on more than one. That is not a warning — it is an ambiguity that used to be
 invisible.
 
+## The toolbox, not just the talk
+
+A transcript says what was done. It does not say what it was done with.
+
+Restore a session from six months ago and it will reference an agent you
+deleted, a skill you renamed, a hook that no longer fires. The words survive and
+the machinery around them does not, which makes the words progressively harder
+to read. On a new machine it is worse: the session restores perfectly into an
+environment that never had any of it.
+
+So the vault keeps a copy of `~/.claude` too.
+
+```bash
+arca config                 # what would be copied, and what is held back
+arca config --sync          # copy it now
+arca config --restore       # write it back, on this machine or another
+arca config --scan          # look for credentials across the whole vault
+```
+
+It rides in the same git repository as the transcripts, which is the whole
+trick: a snapshot is a commit, the history is `git log`, going back is
+`git checkout`, and a second machine gets it with `git pull`. None of that had
+to be built.
+
+| kept | not kept |
+|---|---|
+| `CLAUDE.md`, `settings.json`, statusline | anything that looks like a credential |
+| `agents/`, `commands/`, `skills/`, `hooks/` | `node_modules/` vendored inside a skill |
+| the plugin list | the skills Claude Code downloads for itself |
+| `projects/*/memory/` — what Claude learned about each project | audio, logs, `.env` |
+| | `plans/`, `tasks/`, `todos/` — session state, not configuration |
+
+That last exclusion is not fastidiousness. `todos/` alone is 14,257 files on the
+machine this was written on, of which 188 hold anything, and every session start
+churns them. The whole capture as it stands is about 1,800 files and 10 MB, and
+only what changed goes into a commit.
+
+The `SessionStart` hook does this for you, at most once an hour — a full pass
+costs a second and a half to discover that nothing moved. `arca config --sync`
+ignores the cooldown.
+
+### Credentials
+
+A vault is a git repository, and the point of a git repository is that it can be
+pushed somewhere. So nothing is copied without being read first.
+
+```
+4 file(s) held back — they look like they hold a credential:
+  projects/w--app/memory/project_v8_launch_state.md
+      line    77  prefixed   github-pat           github...(93 chars)
+      line    75  prefixed   huggingface-token    hf_oEC...(37 chars)
+```
+
+Rules come in two kinds. A **prefixed** rule matches an issued credential by the
+shape its issuer gave it — `ghp_`, `hf_`, `AKIA`, `sk-ant-` — and is near
+enough to certain. A **contextual** rule matches a long opaque string next to a
+word like `password`, which is a guess, and says so. Findings are reported
+masked: a scanner that echoes what it caught has published it twice.
+
+To keep a file anyway, put its path in `~/.claude-vault/.arca/config-allow`.
+
+`arca config --scan` points the same rules at the entire vault, transcripts
+included. **Run it before adding a git remote.** A key printed into a terminal
+during a session is in the archive verbatim, and no amount of care taken since
+has removed it.
+
+### Restoring
+
+`--restore` refuses to overwrite anything. On a fresh machine nothing is in the
+way; the one time something is, it is that machine's live `settings.json`, which
+is not a file to replace because a flag was passed out of habit. Conflicts are
+listed and skipped. `--force` replaces them and keeps each previous file as
+`<name>.before-arca-restore`.
+
 ## Wire it up
 
 ```bash
@@ -456,6 +531,7 @@ it across your whole corpus.
 ~/.claude/history.jsonl       every prompt ever typed, written by Claude Code
 ~/.claude-vault/              the archive — a git repo, one dir per project
 ~/.claude-vault/.arca/        machine manifests and archived prompts (in git)
+~/.claude-vault/config/       a copy of ~/.claude (in git)
 ~/.claude-vault/index/        vault.db — SQLite + sqlite-vec + FTS5 (not in git)
 ~/.claude-vault/.cache/       the embedding model (not in git)
 ~/.claude-vault/vault.log
