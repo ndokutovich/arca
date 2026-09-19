@@ -8,7 +8,7 @@ decided, and why.
 
 Claude Code writes every session to `~/.claude/projects/` as JSONL and never reads it
 again. Compaction throws away the conversation the current session can no longer hold.
-This keeps that history, in git, and makes it searchable.
+Cleanup throws away the file. This keeps both, in git, and makes them searchable.
 
 Everything runs locally. Embeddings are computed on your machine; nothing is sent
 anywhere.
@@ -27,10 +27,28 @@ Four layers, each answering a different question, built from the same transcript
 Plus a small temporal knowledge graph (`x runs_on_port 3001` *since* a date), so
 "what port was that on in April?" has an answer.
 
-## Install
+And three kinds of recovery, which are the part nothing else does:
 
-Requires Node 22.13+. There is no compiler step: SQLite comes from Node
-itself, and the two remaining native pieces ship prebuilt binaries.
+| | |
+|---|---|
+| `arca restore` | sessions Claude Code no longer has |
+| `arca resurrect` | sessions `--resume` cannot open |
+| `arca prompts` | questions whose session is gone entirely |
+
+## Quickstart
+
+```bash
+npm install -g @ndokutovich/arca
+arca install
+arca prompts --import
+```
+
+`arca install` registers the SessionStart hook, the MCP server and the skills,
+and archives what you already have. `arca` on its own lists everything else.
+
+Requires Node 22.13+.
+
+## Install from source
 
 ```bash
 git clone https://github.com/ndokutovich/arca.git
@@ -38,44 +56,104 @@ cd arca
 npm install
 ```
 
-Three dependencies. `npm install` pulls about 315 MB, nearly all of it the
-ONNX runtime, which ships every platform's binaries in one package.
-
-**First run downloads the embedding model** — all-MiniLM-L6-v2, about 90 MB,
-into `~/.claude-vault/models/`. It happens once, the files are checksum-pinned,
-and nothing works until it finishes. It sits with the rest of the vault rather
-than inside `node_modules`, so upgrading arca does not throw it away.
+Three dependencies, 116 packages, about 315 MB — nearly all of it the ONNX
+runtime, which ships every platform's binaries in one package.
 
 **Nothing here compiles.** SQLite is Node's own `node:sqlite`; `sqlite-vec` and
 the ONNX runtime ship prebuilt binaries. No node-gyp, no Python, no toolchain.
 
-## Use
+**First run downloads the embedding model** — all-MiniLM-L6-v2, about 90 MB,
+into `~/.claude-vault/.cache/models/`. It happens once, both files are
+checksum-pinned, and nothing works until it finishes. It lives outside
+`node_modules`, so upgrading arca does not throw it away, and outside git, so
+it never reaches a remote.
+
+## Commands
 
 ```bash
-node indexer.js              # index new exchanges (incremental, safe to re-run)
-node indexer.js --full       # re-index everything from scratch
-node build-entities.js       # rebuild the entity layer
-node build-kg.js             # rebuild the knowledge graph
-node build-threads.js        # rebuild topic threads
-node build-thread-map.js     # render threads to an interactive thread-map.html
-node cli.js search "query"   # search from the shell
-node cli.js restore          # sessions Claude Code no longer has
-node cli.js resurrect        # sessions resume cannot open
-node cli.js import <dir>     # fold in a claude.ai export
-node cli.js install          # register with Claude Code
+arca                      # what all of this is
+arca help <command>       # and what one of them does
+
+arca search "query"       # hybrid search; two or more queries is an AND
+arca prompts "query"      # search what you typed, session or no session
+arca read <path>          # print a conversation as markdown
+arca stats                # what the vault and the index hold
+
+arca index                # fold new exchanges in (incremental, safe to re-run)
+arca index --full         # rebuild from every archive, and reconcile
+
+arca restore              # sessions Claude Code no longer has
+arca resurrect            # transcripts resume cannot open
+arca import <dir>         # fold in a claude.ai export
+arca machines             # which machine each session came from
+arca install              # register with Claude Code
 ```
 
-Run the three `build-*` scripts **in that order and one at a time** — they each rewrite
-whole tables, and running them against a live indexer will collide on the write lock.
+The derived layers rebuild with `build-entities.js`, `build-kg.js` and
+`build-threads.js`, **in that order and one at a time** — each rewrites whole
+tables, and running them against a live indexer collides on the write lock. The
+hook runs them in order for you through `hooks/pipeline.js`.
+`build-thread-map.js` renders threads to an interactive `thread-map.html`.
+
+## The MCP tools
+
+Nineteen, all read-only unless noted.
+
+**Finding things**
+
+| Tool | For |
+|---|---|
+| `search` | hybrid vector + FTS5 over every exchange; 2-5 concepts for an AND |
+| `read` | one conversation in full, with line-range pagination |
+| `prompt_search` | every prompt ever typed, including where the session is gone |
+| `essence_search` | only decisions, constraints, tensions, anti-patterns (~5% of the corpus) |
+| `stats` | counts across every layer |
+
+**Entities — what threads through the work**
+
+| Tool | For |
+|---|---|
+| `entity_search` | one named thing's footprint: which projects, how often, first and last seen |
+| `entity_profile` | everything ranked by how many projects it spans |
+
+**Knowledge graph — facts with a validity window**
+
+| Tool | For |
+|---|---|
+| `kg_query` | facts about a subject, optionally *as of* a date |
+| `kg_timeline` | how those facts changed, oldest first |
+| `kg_add` | record one *(writes)* |
+| `kg_invalidate` | mark one no longer true *(writes)* |
+
+**Observations — things worth keeping deliberately**
+
+| Tool | For |
+|---|---|
+| `observation_add` | record a typed learning: discovery, decision, gotcha, trade-off, bugfix *(writes)* |
+| `observation_search` | hybrid search over them |
+| `observation_index` | a cheap list — id, type, title, date — for priming a session |
+
+**Threads — a storyline across sessions**
+
+| Tool | For |
+|---|---|
+| `thread_list` | threads by session reach; `return_count` says how often you came back |
+| `thread_search` | find the thread for a topic |
+| `thread_detail` | walk one thread's segments in order, across every session |
+
+**You, as an operator**
+
+| Tool | For |
+|---|---|
+| `operator_profile` | the distribution of your prompt kinds — trust versus correction, flow versus polling |
+| `recent_status_pings` | "what was I waiting on" — recent pokes at in-flight work |
 
 ## Restore a session Claude Code lost
 
-This is the part nothing else does.
-
 `~/.claude/projects/` is not permanent. Sessions vanish from it — cleanup, a
 reinstall, a new machine — and once they are gone `claude --resume` cannot offer
-them. The vault still has them. On the corpus this was built against, **four out
-of five archived sessions exist only in the vault**.
+them. The vault still has them. On the corpus this was built against, **three out
+of four archived sessions exist only in the vault** — 4,246 of 5,769.
 
 ```bash
 arca restore                 # what the vault has and Claude Code does not
@@ -121,6 +199,57 @@ what it would have ignored, and lands in a file small enough to open.
 The original is never touched. The fork gets a new id and every record is
 retagged to it, so the file agrees with its own name.
 
+## Prompts whose session is gone
+
+The deepest recovery, and the cheapest. Claude Code keeps every prompt you have
+ever typed in `~/.claude/history.jsonl` — outside the per-project transcripts,
+and outliving them. So it still holds the questions from sessions deleted before
+you installed any of this.
+
+```bash
+arca prompts --import        # archive new entries and index them
+arca prompts "query"         # search them
+arca prompts "q" --orphans   # only the ones with no session left
+```
+
+On the corpus this was built against: 30,247 prompts back to September 2025, of
+which **15,174 have no surviving session** — everything before the vault existed
+is simply gone in every other form.
+
+A prompt counts as surviving if the index holds the exchange it opened, or any
+exchange from the same project within half an hour. Text alone is not enough: a
+slash command is stored in the transcript expanded, not as the seven characters
+you typed, so `/effort` would look lost while its whole session sat in the vault.
+
+The file is never copied wholesale — Claude Code rewrites it in place, and a
+plain copy would add a 10 MB blob to the vault on every commit. Only entries past
+the stored watermark are appended.
+
+## More than one machine
+
+The vault is a git repository, so a second machine folds in with a pull. What a
+pull cannot work out is which machine a session came from — and project
+directories are named after filesystem paths, so the same directory name on two
+machines may be one project or two unrelated ones.
+
+Nothing is renamed and nothing is merged away to resolve that. Each machine
+writes one append-only manifest naming the sessions it produced, and only ever
+its own file, so two vaults merge with no conflict and the question keeps an
+answer.
+
+```bash
+arca machines            # who has written here, and what they own
+arca machines --adopt    # claim every session no manifest covers yet
+```
+
+**Adopt on each machine before you add a remote.** Afterwards, sessions pulled
+from elsewhere are indistinguishable from your own, and adopting would put your
+name on them. A session another machine has claimed is never taken.
+
+`arca stats` then breaks down by machine and names the project names that appear
+on more than one. That is not a warning — it is an ambiguity that used to be
+invisible.
+
 ## Wire it up
 
 ```bash
@@ -131,16 +260,16 @@ arca install --dry-run   # show what it would change, write nothing
 
 The installer merges: it adds only its own entries, writes through a
 temporary file and a rename so an interrupted write cannot truncate anything,
-backs up
-`~/.claude/settings.json` and `~/.claude.json` before touching either, and does
-nothing the second time. It never rewrites those files wholesale — they hold
-your permissions, environment and every other hook.
+backs up `~/.claude/settings.json` and `~/.claude.json` before touching either,
+and does nothing the second time. It never rewrites those files wholesale — they
+hold your permissions, environment and every other hook. An entry that does not
+point into this package is reported and left alone.
 
 If you would rather wire it by hand, the two pieces are these.
 
 **The hook** keeps the archive current. `hooks/session-vault.js` runs on `SessionStart`:
-it copies new and changed session files into `~/.claude-vault/`, commits them, and kicks
-off incremental indexing. Register it in `~/.claude/settings.json`:
+it copies new and changed session files into `~/.claude-vault/`, claims them for this
+machine, syncs new prompts, commits, and kicks off incremental indexing.
 
 ```json
 {
@@ -158,8 +287,7 @@ Set `ARCA_HOME` to the checkout if the hook lives elsewhere. It logs failures to
 `~/.claude-vault/vault.log` rather than failing silently — worth watching the first few
 sessions.
 
-**The MCP server** exposes 18 tools to Claude Code — search, essence, entities, KG,
-threads, observations. In `~/.claude.json`:
+**The MCP server** exposes the nineteen tools above. In `~/.claude.json`:
 
 ```json
 {
@@ -174,6 +302,23 @@ threads, observations. In `~/.claude.json`:
 
 `skill/SKILL.md` and `agent/search-conversations.md` are installable Claude Code
 surfaces for the same thing, if you prefer a skill over an MCP server.
+
+## Importing claude.ai history
+
+A claude.ai data export can be folded into the same index:
+
+```bash
+arca import /path/to/export-dir
+```
+
+It takes the directory of zips the export arrives as, converts each conversation into
+the JSONL shape Claude Code writes, and drops them into the archive — so the same
+parser, indexer and layers handle them with no special cases. Re-running on a fresh
+export only writes what changed. Rows carry `source = 'claude_ai'` to keep them
+distinguishable.
+
+Claude Desktop and Cowork keep no conversation store on disk — only logs — so the
+export is the only channel for those, and it already covers them.
 
 ## It reads more than English
 
@@ -213,7 +358,7 @@ embedding — of text. Both are gone.
 
 One honest expectation: embeddings run on the CPU through ONNX, and a
 single-board computer will index at a fraction of a laptop's pace. Search,
-restore and resurrect are unaffected — they touch no model at all.
+restore, resurrect and prompts are unaffected — they touch no model at all.
 
 ## Your own names
 
@@ -235,28 +380,42 @@ it across your whole corpus.
 ## Where things live
 
 ```
-~/.claude/projects/     source transcripts, written by Claude Code
-~/.claude-vault/        the archive — a git repo, one dir per project
-~/.claude-vault/index/  vault.db (SQLite + sqlite-vec + FTS5)
+~/.claude/projects/           source transcripts, written by Claude Code
+~/.claude/history.jsonl       every prompt ever typed, written by Claude Code
+~/.claude-vault/              the archive — a git repo, one dir per project
+~/.claude-vault/.arca/        machine manifests and archived prompts (in git)
+~/.claude-vault/index/        vault.db — SQLite + sqlite-vec + FTS5 (not in git)
+~/.claude-vault/.cache/       the embedding model (not in git)
 ~/.claude-vault/vault.log
 ```
 
 The archive is a normal git repository. Back it up, push it somewhere private, or
-`git log` it like anything else.
+`git log` it like anything else. Everything derived — the index, the model, the
+logs, and the file naming which machine this is — is ignored, because only the
+transcripts are irreplaceable.
 
-## Importing claude.ai history
+## Prior art
 
-A claude.ai data export can be folded into the same index:
+Very little here is new. What is new is the combination, and that it runs
+against your own transcripts.
 
-```bash
-arca import /path/to/export-dir
-```
-
-It takes the directory of zips the export arrives as, converts each conversation into
-the JSONL shape Claude Code writes, and drops them into the archive — so the same
-parser, indexer and layers handle them with no special cases. Re-running on a fresh
-export only writes what changed. Rows carry `source = 'claude_ai'` to keep them
-distinguishable.
+| | What it contributed |
+|---|---|
+| Vannevar Bush, *As We May Think* (1945) | the memex and its associative trails — which is what threads are |
+| Endel Tulving (1972) | episodic versus semantic memory; the whole shape of episodes below, derived layers above |
+| Niklas Luhmann's *Zettelkasten* | structure emerging from links rather than hierarchy |
+| Park et al., *Generative Agents* (2023) | memory stream → reflection → higher-level observations; the essence layer is exactly this |
+| Packer et al., *MemGPT* / Letta | an agent editing its own memory — `kg_add`, `observation_add` |
+| Lewis et al., *RAG* (2020) | retrieval in front of generation |
+| Cormack, Clarke & Büttcher (2009) | Reciprocal Rank Fusion, the formula that merges vector and FTS results here |
+| Reimers & Gurevych, *Sentence-BERT* (2019) | all-MiniLM-L6-v2 comes from this line |
+| Richard Snodgrass, bitemporal databases | `valid_from` / `valid_to` — "what was true in April" |
+| Zep / Graphiti | a temporal knowledge graph for agent memory; the nearest living relative |
+| Jamie Zawinski's threading algorithm (1997) | stitching a conversation into threads; this one stitches by embedding instead |
+| git | content-addressed append-only history as the substrate — the vault *is* a repository |
+| Richard Hipp (SQLite, FTS5), Alex Garcia (sqlite-vec) | the engine |
+| Obsidian, Roam | `[[name]]` as a first-class link |
+| rewind.ai, Screenpipe | total personal recall, kept local |
 
 ## Tests
 
@@ -264,13 +423,16 @@ distinguishable.
 npm test
 ```
 
-44 tests over the parsing, entity, KG and thread layers. No network, no database.
+98 tests over parsing, the tokenizer, the CLI, the hook, machine manifests,
+prompt history, path confinement, and the entity, KG and thread layers. No
+network, no database.
 
 ## Scale
 
-For reference, a corpus of ~25,600 exchanges across 114 projects and ~5,000 transcript
-files produces a ~330 MB database, with ~58,000 essence extracts, ~9,600 entities and
-~127 threads on top of it. Incremental indexing of a single new session is a second or
+For reference, a corpus of ~30,100 exchanges across 121 projects and ~3,200
+transcript files produces a ~450 MB database, with ~57,000 essence extracts,
+~8,900 entities, 838 knowledge-graph facts and ~125 threads on top of it, plus
+~30,200 prompts. Incremental indexing of a single new session is a second or
 two; a full re-index of that corpus is a coffee break, dominated by embedding.
 
 ## Name
