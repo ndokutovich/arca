@@ -254,15 +254,19 @@ Claude Code is not, so a single-source vault reads exactly as it did.
 `arca restore` never offers them. A session that was not a Claude Code session
 cannot be resumed as one.
 
-| adapter | status |
+| adapter | verified against |
 |---|---|
-| `codex` | Codex CLI — read against a real 3.3 GB corpus |
+| `codex` | a real 3.3 GB corpus, 453 sessions |
+| `opencode` | a real corpus, 120 sessions across 11,167 files |
+| `gemini` | a real corpus, 10 sessions |
 
-Eight more are known and not yet written: Cursor, OpenCode, Gemini CLI, Aider,
-Cline, ForgeCode, Antigravity, and Claude Code itself as an explicit adapter.
-An adapter that has never been run against a real file says so in
-`arca sources`, because a parser built from a format description is a claim,
-not a result.
+Six more are known and not yet written: Cursor, Aider, Cline, ForgeCode,
+Antigravity, and Claude Code itself as an explicit adapter. An adapter that has
+never been run against a real file says so in `arca sources`, because a parser
+built from a format description is a claim, not a result — and Gemini is the
+reason that matters: its own shipped fixtures describe a message shape the CLI
+does not write, and an adapter built from them reads every real session as
+empty while reporting success.
 
 ## More than one machine
 
@@ -462,7 +466,7 @@ against your own transcripts.
 npm test
 ```
 
-139 tests over parsing, the tokenizer, the CLI, the hook, machine manifests,
+160 tests over parsing, the tokenizer, the CLI, the hook, machine manifests,
 prompt history, the claude.ai importer, source adapters, restore's refusal to
 offer what it cannot restore, the model cache, path confinement, and the
 entity, KG and thread layers. No network, no database.
