@@ -423,9 +423,9 @@ against your own transcripts.
 npm test
 ```
 
-98 tests over parsing, the tokenizer, the CLI, the hook, machine manifests,
-prompt history, path confinement, and the entity, KG and thread layers. No
-network, no database.
+115 tests over parsing, the tokenizer, the CLI, the hook, machine manifests,
+prompt history, the claude.ai importer, the model cache, path confinement, and
+the entity, KG and thread layers. No network, no database.
 
 ## Scale
 
