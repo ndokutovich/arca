@@ -2,9 +2,8 @@
 
 *A vault for everything Claude Code throws away.*
 
-Episodic memory for Claude Code. It archives your session transcripts, indexes them,
-and serves them back through MCP — so a new session can recall what earlier ones
-decided, and why.
+It archives your session transcripts, indexes them, and serves them back through
+MCP — so a new session can recall what earlier ones decided, and why.
 
 Claude Code writes every session to `~/.claude/projects/` as JSONL and never reads it
 again. Compaction throws away the conversation the current session can no longer hold.
@@ -551,7 +550,8 @@ MIT. This started as his, and a lot of it still is: the same four dependencies
 (MCP SDK, transformers.js, better-sqlite3, sqlite-vec), the same file layout —
 db, embeddings, indexer, parser, paths, search, show, mcp-server — and `search`
 and `read` matching his down to the parameter names and the values of their
-enums. The line at the top of this README is the name of his project.
+enums. Calling a tool like this an episodic memory is his phrasing, and this
+README used to open with it.
 
 It was good at everything I wanted except two things, and both were about what
 a session is made of. Its index keeps which tools ran and what they were given,
