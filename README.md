@@ -495,17 +495,18 @@ against your own transcripts.
 npm test
 ```
 
-214 tests over parsing, the tokenizer, the CLI, the hook, machine manifests,
+219 tests over parsing, the tokenizer, the CLI, the hook, machine manifests,
 prompt history, the claude.ai importer, source adapters, restore's refusal to
 offer what it cannot restore, the model cache, path confinement, and the
 entity, KG and thread layers. No network, no database.
 
 ## Scale
 
-For reference, a corpus of ~30,100 exchanges across 121 projects and ~3,200
-transcript files produces a ~450 MB database, with ~57,000 essence extracts,
-~8,900 entities, 838 knowledge-graph facts and ~125 threads on top of it, plus
-~30,200 prompts. Incremental indexing of a single new session is a second or
+For reference, a corpus of ~31,300 exchanges across 138 projects and ~3,700
+transcript files produces a ~500 MB database, with ~60,800 essence extracts,
+~9,100 entities, 844 knowledge-graph facts and ~122 threads on top of it, plus
+~30,200 prompts. That corpus spans seven assistants; Claude Code is 28,091 of
+those exchanges and the other six make up the rest. Incremental indexing of a single new session is a second or
 two; a full re-index of that corpus is a coffee break, dominated by embedding.
 
 ## Name

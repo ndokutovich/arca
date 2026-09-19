@@ -64,7 +64,7 @@
     "thread-map.template.html",
     "README.md",
     "LICENSE",
-    "!lib/*.test.js"
+    "!**/*.test.js"
   ],
   "bin": {
     "arca": "cli.js"
