@@ -171,6 +171,27 @@ function ensureGitignore() {
   } catch { /* the hook must not fail over a gitignore */ }
 }
 
+// Repacking a vault of half-gigabyte transcripts runs one delta window per CPU
+// with no memory cap by default, and dies: "out of memory" on an allocation a
+// machine with 13 GB free could have served ten times over. Auto-gc then gives
+// up silently, and the repository grows to a hundred gigabytes of loose
+// objects that nothing ever packs.
+//
+// Applied to every vault, not just new ones -- an existing vault is exactly
+// the one already in that state -- and only when a value is missing, so a
+// deliberate setting of yours is never overwritten.
+function ensurePackLimits() {
+  if (!hasGit()) return;
+  for (const [key, value] of [['pack.windowMemory', '1g'], ['pack.threads', '1']]) {
+    try {
+      const current = gitRead(['config', '--get', key]).trim();
+      if (current) continue;
+    } catch { /* unset exits non-zero, which is the case we are here for */ }
+    try { gitExec(['config', key, value]); }
+    catch (e) { note('could not set ' + key + ': ' + ((e && e.message) || e)); }
+  }
+}
+
 // Async only because the machine manifest is an ESM module loaded on demand;
 // everything else here is deliberately synchronous.
 async function backup() {
@@ -184,13 +205,9 @@ async function backup() {
       gitExec(['init']);
       gitExec(['config', 'user.name', 'session-vault']);
       gitExec(['config', 'user.email', 'vault@local']);
-      // Without these, packing a vault of half-gigabyte transcripts runs the
-      // delta window per CPU with no memory cap and dies -- which is how a
-      // repository reaches 130 GB of loose objects that auto-gc never packs.
-      gitExec(['config', 'pack.windowMemory', '1g']);
-      gitExec(['config', 'pack.threads', '1']);
     } catch (e) { note('git init failed: ' + ((e && e.message) || e)); }
   }
+  ensurePackLimits();
   ensureGitignore();
 
   let copied = 0;
