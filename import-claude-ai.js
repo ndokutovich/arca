@@ -33,6 +33,8 @@ import path from 'path';
 import { execFileSync } from 'child_process';
 import { fileURLToPath } from 'url';
 import { StringDecoder } from 'string_decoder';
+import { slug, line as transcriptLine, messageText, writeConversation, newStats }
+  from './lib/transcript-write.js';
 
 const VAULT_DIR = path.join(os.homedir(), '.claude-vault');
 const SOURCE = 'claude_ai';
@@ -42,13 +44,6 @@ const BRACE_OPEN = 123;   // {
 const BRACE_CLOSE = 125;  // }
 const QUOTE = 34;         // "
 const BACKSLASH = 92;
-
-function slug(name) {
-  return String(name || 'untitled')
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '') || 'untitled';
-}
 
 /**
  * Yield each top-level object of a JSON array file without holding the whole
@@ -111,66 +106,9 @@ function* streamArrayObjects(filePath) {
   }
 }
 
-const line = (role, text, ts, sessionId) => JSON.stringify({
-  type: role === 'assistant' ? 'assistant' : 'user',
-  message: { role: role === 'assistant' ? 'assistant' : 'user', content: text },
-  timestamp: ts,
-  sessionId,
-  cwd: null,
-  gitBranch: null,
-  isSidechain: false,
-  source: SOURCE,
-});
-
-// A message carries its text in `text` (conversations) or nested inside
-// `content` (design chats). Fall back to concatenating structured blocks.
-function messageText(m) {
-  if (typeof m.text === 'string' && m.text.length) return m.text;
-  const c = m.content;
-  if (typeof c === 'string') return c;
-  if (c && typeof c.content === 'string') return c.content;
-  if (Array.isArray(c)) {
-    return c.map((b) => (typeof b === 'string' ? b : (b && b.text) || '')).join(NL).trim();
-  }
-  return '';
-}
-
-// Ids come from an export file, so they are untrusted input that ends up as a
-// path component. An id of "../../evil" would otherwise write outside the vault
-// entirely, and a missing one collapses every conversation into undefined.jsonl.
-const UUIDISH = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
-
-function safeId(id) {
-  const s = typeof id === 'string' ? id.trim() : '';
-  return UUIDISH.test(s) && !s.includes('..') ? s : null;
-}
-
-function writeConversation(destDir, id, rows, stats, dryRun) {
-  if (!rows.length) { stats.empty++; return; }
-  const safe = safeId(id);
-  if (!safe) { stats.unreadable++; return; }
-  const body = rows.join(NL) + NL;
-  const file = path.join(destDir, safe + '.jsonl');
-  // Belt and braces: even a regex-clean id must land where we meant it to.
-  if (path.relative(destDir, file).includes('..')) { stats.unreadable++; return; }
-  try {
-    if (fs.readFileSync(file, 'utf8') === body) { stats.unchanged++; return; }
-    stats.updated++;
-  } catch (_) {
-    stats.created++;
-  }
-  if (dryRun) return;
-  fs.mkdirSync(destDir, { recursive: true });
-  // An interrupted overwrite would replace a good archive with a truncated one.
-  const tmp = `${file}.tmp-${process.pid}`;
-  try {
-    fs.writeFileSync(tmp, body);
-    fs.renameSync(tmp, file);
-  } catch (e) {
-    try { fs.unlinkSync(tmp); } catch { /* nothing to clean */ }
-    throw e;
-  }
-}
+// Same shape as every other source; only the tag differs.
+const line = (role, text, ts, sessionId) =>
+  transcriptLine({ role, text, ts, sessionId, source: SOURCE });
 
 function importConversations(file, stats, dryRun) {
   const dest = path.join(VAULT_DIR, 'claude-ai-web');
@@ -269,7 +207,7 @@ export function runImport(src, { dryRun = false, keepTemp = false, log = console
     log(`extracted ${zips.length} archive(s) to ${work}`);
   }
 
-  const stats = { conversations: 0, created: 0, updated: 0, unchanged: 0, empty: 0, unreadable: 0 };
+  const stats = newStats();
 
   try {
     const convFile = path.join(work, 'conversations.json');
