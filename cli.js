@@ -502,7 +502,7 @@ const COMMANDS = {
       'The engine underneath arca never knew what Claude Code was — it takes',
       'text and gives back ranked text. Only the way in was Claude-shaped.',
       '',
-      'A source adapter finds another assistant\'s sessions and converts them',
+      "A source adapter finds another assistant's sessions and converts them",
       'into the same archive format, so search, essence, entities and threads',
       'all see them with no special case. Imported sessions share the project',
       'directory of the Claude Code sessions run in the same place, because',
@@ -510,39 +510,124 @@ const COMMANDS = {
       '',
       'They mix into ordinary search; `--source <id>` narrows to one.',
       '',
-      'An adapter marked "fixtures" has never been run against a real file on',
-      'this machine — it is built from the format, not from your data.',
+      'Which assistants are read is your choice and it is remembered. Run',
+      '`arca sources --select` for a checklist, or --enable / --disable from a',
+      'script. Until you choose, everything detected is read.',
+      '',
+      'Claude Code is listed but has no adapter: the SessionStart hook copies',
+      'its transcripts byte for byte, which is what lets `arca restore` hand',
+      'one back to `claude --resume`. Re-rendering them through an adapter',
+      'would lose the tool calls, the sidechains and the exact bytes.',
+      '',
+      'An adapter marked as built from the format has never been run against a',
+      'real file on this machine.',
     ],
     flags: {
-      import: { boolean: true, describe: 'fold detected sessions into the vault' },
-      only: { value: 'ID', describe: 'just this source' },
+      import: { boolean: true, describe: 'fold enabled sessions into the vault' },
+      select: { boolean: true, describe: 'choose which assistants to read' },
+      enable: { value: 'IDS', describe: 'turn these on (comma separated)' },
+      disable: { value: 'IDS', describe: 'turn these off (comma separated)' },
+      only: { value: 'ID', describe: 'just this source, ignoring the selection' },
       'dry-run': F.dryRun,
       force: { boolean: true, describe: 're-read sessions even if unchanged' },
     },
     examples: [
       'arca sources',
+      'arca sources --select',
+      'arca sources --enable codex,cline',
       'arca sources --import --dry-run',
-      'arca sources --import --only codex',
     ],
     async run({ flags }) {
       const S = await import('./lib/sources/index.js');
-      const only = flags.only || null;
-      if (only && !S.byId(only)) {
-        fail(`no source called "${only}" (have: ${S.ADAPTERS.map((a) => a.id).join(', ')})`);
+      const sel = await import('./lib/sources/selection.js');
+      const { checklist, interactive } = await import('./lib/checklist.js');
+      const { projectsDir } = await import('./lib/transcripts.js');
+
+      const ids = (value) => String(value || '').split(',').map((x) => x.trim()).filter(Boolean);
+      const known = S.ADAPTERS.map((a) => a.id);
+      for (const id of [...ids(flags.enable), ...ids(flags.disable), flags.only].filter(Boolean)) {
+        if (!known.includes(id)) fail(`no source called "${id}" (have: ${known.join(', ')})`);
       }
 
-      const found = S.detectAll().filter((d) => !only || d.id === only);
-      if (!flags.import) {
+      const found = S.detectAll();
+
+      // Claude Code belongs in the listing and not in the registry: the hook
+      // copies its transcripts verbatim, and that is what restore depends on.
+      const claudeCode = {
+        id: 'claude-code',
+        label: 'Claude Code',
+        present: fs.existsSync(projectsDir()),
+        managed: 'kept by the SessionStart hook, not by an adapter',
+      };
+
+      const applyFlags = () => {
+        if (!flags.enable && !flags.disable) return false;
+        const current = sel.load();
+        const on = new Set(current.chosen
+          ? current.enabled
+          : found.filter((d) => d.present).map((d) => d.id));
+        for (const id of ids(flags.enable)) on.add(id);
+        for (const id of ids(flags.disable)) on.delete(id);
+        sel.save([...on]);
+        return true;
+      };
+
+      const runPicker = async () => {
+        if (!interactive()) {
+          fail('--select needs a terminal; use --enable / --disable from a script');
+        }
+        const current = sel.load();
+        const items = found.map((d) => ({
+          id: d.id,
+          label: d.label,
+          disabled: !d.present,
+          checked: current.chosen ? current.enabled.includes(d.id) : true,
+          note: d.present
+            ? (d.verifiedAgainst === 'live' ? '' : '(built from the format, unverified here)')
+            : '— not on this machine',
+        }));
+        const chosen = await checklist(items, {
+          title: 'Which assistants should arca read?\n',
+        });
+        if (chosen === null) {
+          console.log('Left as it was.');
+          return false;
+        }
+        sel.save(chosen);
+        return true;
+      };
+
+      if (flags.enable || flags.disable) applyFlags();
+      if (flags.select) await runPicker();
+
+      const doImport = flags.import;
+      if (doImport && !sel.load().chosen && !flags.only && interactive()) {
+        // First import on a machine: ask before reading anyone's history.
+        console.log('No choice recorded yet.');
+        console.log('');
+        await runPicker();
+      }
+
+      const selection = sel.load();
+      const enabled = (id) => (flags.only ? id === flags.only : sel.isEnabled(id, selection));
+
+      if (!doImport) {
         console.log('');
         for (const d of found) {
-          const mark = d.present ? '*' : ' ';
+          const box = !d.present ? '   ' : enabled(d.id) ? '[x]' : '[ ]';
           const where = d.present ? d.root : 'not on this machine';
-          const proof = d.verifiedAgainst === 'live' ? '' : '   (built from fixtures, never run on real data here)';
-          console.log(`${mark} ${d.id.padEnd(12)} ${d.label.padEnd(16)} ${where}${proof}`);
-          if (d.note) console.log(`    ${d.note}`);
+          const proof = d.present && d.verifiedAgainst !== 'live'
+            ? '   (built from the format, unverified here)' : '';
+          console.log(`  ${box} ${d.id.padEnd(12)} ${d.label.padEnd(16)} ${where}${proof}`);
+          if (d.note) console.log(`      ${d.note}`);
         }
+        const where = claudeCode.present ? claudeCode.managed : 'not on this machine';
+        console.log(`   ·  ${claudeCode.id.padEnd(12)} ${claudeCode.label.padEnd(16)} ${where}`);
         console.log('');
-        console.log(`* detected   ·   fold them in with:  arca sources --import`);
+        console.log(selection.chosen
+          ? `Chosen${selection.updated ? ` on ${selection.updated.slice(0, 10)}` : ''} · change it with:  arca sources --select`
+          : 'Nothing chosen yet, so everything detected would be read.  arca sources --select');
+        console.log('Fold them in with:  arca sources --import');
         return;
       }
 
@@ -550,7 +635,7 @@ const COMMANDS = {
       const tag = dryRun ? '[dry-run] ' : '';
       let any = false;
       for (const d of found) {
-        if (!d.present) continue;
+        if (!d.present || !enabled(d.id)) continue;
         any = true;
         const adapter = S.byId(d.id);
         const t0 = Date.now();
@@ -560,7 +645,9 @@ const COMMANDS = {
           + `${s.unchanged} unchanged, ${s.empty} empty, ${s.unreadable} unreadable  (${secs}s)`);
       }
       if (!any) {
-        console.log('Nothing detected on this machine.');
+        console.log(selection.chosen
+          ? 'Nothing enabled is on this machine.  arca sources --select'
+          : 'Nothing detected on this machine.');
         return;
       }
       if (!dryRun) {
@@ -569,7 +656,6 @@ const COMMANDS = {
       }
     },
   },
-
   machines: {
     summary: 'which machine each session came from',
     usage: 'arca machines [--adopt]',

@@ -236,7 +236,9 @@ same archive format, so search, essence, entities and threads all see them with
 no special case anywhere below.
 
 ```bash
-arca sources                     # what is on this machine
+arca sources                     # what is on this machine, and what is read
+arca sources --select            # a checklist: present ones on, absent greyed
+arca sources --enable codex      # or decide from a script
 arca sources --import --dry-run  # counts, nothing written
 arca sources --import            # fold them in
 arca index                       # then index as usual
@@ -244,6 +246,21 @@ arca index                       # then index as usual
 arca search "glibc"              # everything, provenance shown per result
 arca search "glibc" --source codex
 ```
+
+Which assistants get read is your decision and it is remembered, in
+`~/.claude-vault/.arca/sources.json`. It is deliberately not committed: two
+machines hold different assistants and can want different answers. Until you
+choose, everything detected is read — `--import` is already an explicit
+instruction, and refusing to act on it until a second command has been run
+would be a riddle rather than a safeguard. The first interactive `--import`
+asks before it reads anyone's history.
+
+Claude Code is in the listing and has no adapter, on purpose. The hook copies
+its transcripts **byte for byte**, and that is exactly what lets `arca restore`
+hand one back to `claude --resume`. An adapter would read them into turns and
+write them out again, losing the tool calls, the sidechains and the precise
+bytes — two paths writing the same files, the second quietly breaking the
+first.
 
 Imported sessions land in the **same project directory** as the Claude Code
 sessions run in the same place, because they are the same project — and the
@@ -478,7 +495,7 @@ against your own transcripts.
 npm test
 ```
 
-195 tests over parsing, the tokenizer, the CLI, the hook, machine manifests,
+214 tests over parsing, the tokenizer, the CLI, the hook, machine manifests,
 prompt history, the claude.ai importer, source adapters, restore's refusal to
 offer what it cannot restore, the model cache, path confinement, and the
 entity, KG and thread layers. No network, no database.
