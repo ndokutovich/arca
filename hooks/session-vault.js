@@ -22,7 +22,7 @@
 import fs from 'fs';
 import path from 'path';
 import { execFileSync, spawn } from 'child_process';
-import { fileURLToPath } from 'url';
+import { fileURLToPath, pathToFileURL } from 'url';
 
 // vaultMemoryDir() builds three of its six search candidates on __dirname,
 // which ESM does not provide.
@@ -41,6 +41,38 @@ function gitRead(args) {
   return execFileSync('git', args, { cwd: VAULT_DIR, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
 }
 
+// Git is how the vault keeps its history, not how it keeps its files. Without
+// it the archive still fills, the manifests still record which machine wrote
+// what, and the index still builds — what is lost is the ability to see when
+// a transcript changed, and to sync with another machine. That is a smaller
+// loss than refusing to archive anything, so it is a degradation, not a
+// failure.
+//
+// Checked once per process, and said out loud once per vault rather than on
+// every session, because a line in the log every few minutes is noise nobody
+// reads.
+let gitAvailable = null;
+
+function hasGit() {
+  if (gitAvailable !== null) return gitAvailable;
+  try {
+    execFileSync('git', ['--version'], { stdio: 'ignore' });
+    gitAvailable = true;
+  } catch {
+    gitAvailable = false;
+    const marker = path.join(VAULT_DIR, '.arca', 'no-git');
+    if (!fs.existsSync(marker)) {
+      note('git not found: archiving without history. Transcripts, manifests and '
+        + 'indexing all continue; `git log`, remotes and machine sync do not.');
+      try {
+        fs.mkdirSync(path.dirname(marker), { recursive: true });
+        fs.writeFileSync(marker, new Date().toISOString() + String.fromCharCode(10));
+      } catch { /* the note is the important half */ }
+    }
+  }
+  return gitAvailable;
+}
+
 // Where arca actually lives. The old two-levels-up path only resolved
 // from the source tree; once the hook is deployed to ~/.claude/hooks/ it points
 // at a directory that does not exist -- and existsSync turned that into silence.
@@ -51,13 +83,18 @@ function vaultMemoryDir() {
   // are honoured as legacy aliases from the names this carried before.
   const home = process.env.ARCA_HOME || process.env.VAULT_MEMORY_HOME;
   const repo = process.env.CONOTI_LEARN_REPO;
+  // Order matters, and it used to be wrong: a legacy `vault-memory` checkout
+  // under CONOTI_LEARN_REPO outranked the package the hook is part of, so a
+  // hook running from inside an arca checkout loaded an older copy next door
+  // and every module that copy lacked failed to import. An explicit override
+  // still wins; nothing implicit outranks the code this file shipped with.
   const candidates = [
-    home || null,
+    home || null,                                            // explicit, deliberate
+    path.join(__dirname, '..'),                              // the package this hook is part of
     repo ? path.join(repo, 'arca') : null,
-    repo ? path.join(repo, 'vault-memory') : null,          // legacy name
-    path.join(__dirname, '..'),                              // hook inside the checkout
     path.join(__dirname, '..', '..', 'arca'),                // source layout
     path.join(__dirname, '..', 'arca'),                      // deployed alongside
+    repo ? path.join(repo, 'vault-memory') : null,           // legacy name, last resort
   ].filter(Boolean);
   for (const c of candidates) {
     tried.push(c);
@@ -142,11 +179,16 @@ async function backup() {
   // Tie the repo to .git, not to the directory. Opening the index creates
   // VAULT_DIR for index/vault.db, so keying on the directory meant init
   // never ran and every later commit failed with 'git add' on no repo.
-  if (!fs.existsSync(path.join(VAULT_DIR, '.git'))) {
+  if (hasGit() && !fs.existsSync(path.join(VAULT_DIR, '.git'))) {
     try {
       gitExec(['init']);
       gitExec(['config', 'user.name', 'session-vault']);
       gitExec(['config', 'user.email', 'vault@local']);
+      // Without these, packing a vault of half-gigabyte transcripts runs the
+      // delta window per CPU with no memory cap and dies -- which is how a
+      // repository reaches 130 GB of loose objects that auto-gc never packs.
+      gitExec(['config', 'pack.windowMemory', '1g']);
+      gitExec(['config', 'pack.threads', '1']);
     } catch (e) { note('git init failed: ' + ((e && e.message) || e)); }
   }
   ensureGitignore();
@@ -217,7 +259,11 @@ async function backup() {
   const arcaDir = vaultMemoryDir();
   if (arcaDir && copiedFiles.length > 0) {
     try {
-      const { claim } = await import(path.join(arcaDir, 'lib', 'machine.js'));
+      // pathToFileURL, not the path: on Windows `import('W:/...')` is rejected
+      // by the ESM loader as an unknown protocol 'w:'. It threw on every
+      // session, was caught, logged, and nobody read the log — so no claim
+      // was ever recorded by the hook on this platform.
+      const { claim } = await import(pathToFileURL(path.join(arcaDir, 'lib', 'machine.js')).href);
       claim(copiedFiles.map((f) => ({
         session: path.basename(f, '.jsonl'),
         project: path.basename(path.dirname(f)),
@@ -233,7 +279,7 @@ async function backup() {
   // stays small in git.
   if (arcaDir) {
     try {
-      const { syncToVault } = await import(path.join(arcaDir, 'lib', 'history.js'));
+      const { syncToVault } = await import(pathToFileURL(path.join(arcaDir, 'lib', 'history.js')).href);
       const r = syncToVault();
       if (r.appended) note(`history: +${r.appended} prompt(s)`);
     } catch (e) {
@@ -246,6 +292,7 @@ async function backup() {
   // outside git indefinitely: the next run skipped the already-copied files,
   // so `copied` stayed 0 and the commit was never retried.
   try {
+    if (!hasGit()) throw new Error('no git');
     clearStaleLock();
     let dirty = '';
     try { dirty = gitRead(['status', '--porcelain']) || ''; } catch { dirty = ''; }
