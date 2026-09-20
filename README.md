@@ -613,9 +613,10 @@ it runs against your own transcripts.
 npm test
 ```
 
-219 tests over parsing, the tokenizer, the CLI, the hook, machine manifests,
+265 tests over parsing, the tokenizer, the CLI, the hook, machine manifests,
 prompt history, the claude.ai importer, source adapters, restore's refusal to
-offer what it cannot restore, the model cache, path confinement, and the
+offer what it cannot restore, the model cache, path confinement, the
+configuration vault and the credential scanner that guards it, and the
 entity, KG and thread layers. No network, no database.
 
 ## Scale
