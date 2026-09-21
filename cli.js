@@ -901,11 +901,12 @@ const COMMANDS = {
     flags: {
       'dry-run': F.dryRun,
       'no-seed': { boolean: true, describe: 'do not archive existing transcripts on install' },
+      'replace-hook': { boolean: true, describe: 'take over a session-vault hook registered by something else' },
     },
     examples: ['arca install --dry-run'],
     async run({ flags }) {
       const { install } = await lazy.install();
-      const r = install({ dryRun: !!flags['dry-run'], seed: !flags['no-seed'] });
+      const r = install({ dryRun: !!flags['dry-run'], seed: !flags['no-seed'], replaceHook: !!flags['replace-hook'] });
       const tag = r.dryRun ? '[dry-run] ' : '';
       console.log(`${tag}arca at ${r.root}`);
       console.log(`${tag}settings.json: ${r.settings}`);
