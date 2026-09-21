@@ -60,6 +60,12 @@ async function indexFile(filePath, project, fullReindex = false) {
   let indexed = 0;
   let skipped = 0;
 
+  // A sidechain's entries carry isSidechain themselves, but the filename is
+  // the part that cannot be wrong: agent-*.jsonl is a subagent transcript
+  // whatever its contents claim. Without this, a file missing the flag joins
+  // the default results silently — the failure nobody notices.
+  const sidechain = path.basename(filePath).startsWith('agent-');
+
   for (const exchange of exchanges) {
     if (existingIds.has(exchange.id)) {
       skipped++;
@@ -73,7 +79,7 @@ async function indexFile(filePath, project, fullReindex = false) {
       toolNames
     );
 
-    upsertExchange(exchange, embedding);
+    upsertExchange(sidechain ? { ...exchange, isSidechain: true } : exchange, embedding);
     if (!exchange.isSystemNoise) {
       const extracts = extractExchangeEssence(exchange);
       upsertEssence(exchange.id, exchange.project, extracts);

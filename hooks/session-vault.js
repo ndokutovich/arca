@@ -237,7 +237,7 @@ async function backup() {
     let files;
     try {
       files = fs.readdirSync(projPath, { withFileTypes: true })
-        .filter(f => f.isFile() && f.name.endsWith('.jsonl') && !f.name.startsWith('agent-'));
+        .filter(f => f.isFile() && f.name.endsWith('.jsonl'));
     } catch { continue; }
 
     if (files.length === 0) continue;

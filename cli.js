@@ -117,6 +117,7 @@ const F = {
   source: { value: 'ID', describe: 'only this assistant (see `arca sources`)' },
   limit: { value: 'N', describe: 'how many to show' },
   dryRun: { boolean: true, describe: 'show what would happen, write nothing' },
+  includeAgents: { boolean: true, describe: 'also search subagent sidechains' },
 };
 
 // --- commands --------------------------------------------------------------
@@ -137,6 +138,7 @@ const COMMANDS = {
       before: { value: 'YYYY-MM-DD', describe: 'only before this date' },
       project: F.project,
       source: F.source,
+      'include-agents': F.includeAgents,
     },
     examples: [
       'arca search "why did we drop better-sqlite3"',
@@ -156,6 +158,7 @@ const COMMANDS = {
         before: flags.before,
         project: flags.project,
         source: flags.source,
+        includeAgents: !!flags['include-agents'],
       };
       const S = await lazy.search();
       if (positional.length >= 2) {
