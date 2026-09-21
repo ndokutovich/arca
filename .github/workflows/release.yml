@@ -76,6 +76,11 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      # Trusted publishing: npm takes a short-lived OIDC identity scoped to
+      # this repository and workflow filename instead of a stored secret.
+      # Granular tokens are capped at ninety days and lose direct publish in
+      # January 2027, so the token is the stopgap and this is the path.
+      id-token: write
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
@@ -88,6 +93,9 @@ jobs:
         with:
           node-version: "22"
           registry-url: "https://registry.npmjs.org"
+
+      # Node 22 ships npm 10; trusted publishing needs 11.5.1 or later.
+      - run: npm install -g npm@latest
 
       - run: npm ci
 
@@ -111,6 +119,8 @@ jobs:
           printf '%s' "$NODE_AUTH_TOKEN" | grep -q '[[:space:]]' && echo "WARNING: token contains whitespace - it was pasted with a newline or space"
           echo "authenticated as: $(npm whoami || echo '<rejected>')"
           echo "publishing as:    $(node -p "require('./package.json').name")"
+          echo "npm version:      $(npm --version)  (trusted publishing needs 11.5.1+)"
+          echo "oidc available:   ${ACTIONS_ID_TOKEN_REQUEST_URL:+yes}${ACTIONS_ID_TOKEN_REQUEST_URL:-no}"
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
