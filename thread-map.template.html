@@ -69,7 +69,25 @@ const esc = (v) => String(v == null ? '' : v)
   .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
   .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 const byId = Object.fromEntries(T.map(t => [t.id, t]));
-const shortP = p => p.replace(/^w---proj--own--/,'').replace(/^w---proj--/,'').replace(/^C---init-w--proj--own--/,'').replace(/claude-code-advanced--/,'').replace(/ideator-?-?/,'');
+// Project keys are whole paths with the separators flattened, so every chip
+// repeated the same leading directories and the names that distinguish them
+// fell off the end. This used to strip one machine's layout by name, which
+// shortened nothing on anyone else's. Take the prefix the data itself shares.
+const commonPrefix = (keys) => {
+  if (keys.length < 2) return '';
+  let p = keys[0];
+  for (const k of keys.slice(1)) {
+    let i = 0;
+    while (i < p.length && i < k.length && p[i] === k[i]) i++;
+    p = p.slice(0, i);
+    if (!p) break;
+  }
+  // Cut back to a separator so a shared prefix never eats half a name.
+  const cut = p.lastIndexOf('--');
+  return cut > 0 ? p.slice(0, cut + 2) : '';
+};
+const PREFIX = commonPrefix([...new Set(SEG.map(s => s.p))]);
+const shortP = p => (PREFIX && p.startsWith(PREFIX) ? p.slice(PREFIX.length) : p) || p;
 const segsOf = id => SEG.filter(s => s.t === id).sort((a,b)=> (a.ts||'').localeCompare(b.ts||''));
 document.getElementById('hdrStat').textContent =
   `${T.length} threads · ${SEG.length} segments · ${new Set(SEG.map(s=>s.p)).size} projects`;
