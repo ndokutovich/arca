@@ -164,6 +164,9 @@ const IGNORED = [
   '.arca/sources.json',
   // When the configuration was last copied. Per machine, like the rest.
   '.arca/config-synced',
+  // The id list exists only to diff against the next sample; the log beside
+  // it is the part worth keeping.
+  '.arca/retention/*.ids',
 ];
 
 function ensureGitignore() {
@@ -310,6 +313,21 @@ async function backup() {
       if (r.appended) note(`history: +${r.appended} prompt(s)`);
     } catch (e) {
       note('history sync skipped: ' + ((e && e.message) || e));
+    }
+  }
+
+  // Claude Code deletes transcripts on a rolling thirty-day window, and on
+  // this machine the setting meant to stop it is ignored — a known open bug.
+  // The vault already survives that by copying first; what it could not do is
+  // say when a sweep happened. Each sample names what went missing since the
+  // last one. Rate-limited to a few a day inside.
+  if (arcaDir) {
+    try {
+      const { record } = await import(pathToFileURL(path.join(arcaDir, 'lib', 'retention.js')).href);
+      const r = record();
+      if (r && r.gone.length) note(`retention: ${r.gone.length} session(s) gone since ${r.since}`);
+    } catch (e) {
+      note('retention sample skipped: ' + ((e && e.message) || e));
     }
   }
 

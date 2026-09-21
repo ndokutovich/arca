@@ -240,6 +240,33 @@ const COMMANDS = {
         }
         if (s.shared_projects.length > 10) console.log(`    ... and ${s.shared_projects.length - 10} more`);
       }
+
+      // What Claude Code itself still holds, against what the vault kept.
+      // The gap is the reason this exists, and it is better shown than
+      // claimed.
+      const { summary } = await import('./lib/retention.js');
+      const r = summary();
+      if (r) {
+        console.log('');
+        console.log('  retention');
+        console.log(`    Claude Code holds ${r.held} session(s), oldest ${r.oldest.slice(0, 10)} (${r.days} days)`);
+        // Not a subtraction: the live directory holds transcripts the index
+        // never took, so the two counts are of different things. The number
+        // worth printing is how many archived sessions have lost their
+        // original, which only an intersection can say.
+        const { live } = await import('./lib/retention.js');
+        const here = live();
+        const archived = (await import('./lib/db.js')).getDb()
+          .prepare("SELECT DISTINCT session_id FROM exchanges WHERE source = 'claude_code' AND session_id IS NOT NULL")
+          .all().map((x) => String(x.session_id));
+        const orphaned = archived.filter((id) => !here.has(id)).length;
+        if (orphaned) console.log(`    ${orphaned} archived session(s) no longer exist there`);
+        if (r.lastLoss) {
+          console.log(`    last loss: ${r.lastLoss.gone.length} session(s) between ${String(r.lastLoss.since).slice(0, 16)} and ${r.lastLoss.at.slice(0, 16)}`);
+        } else if (r.samples < 2) {
+          console.log(`    watching since ${r.samples ? 'today' : 'now'} — a loss needs two samples to be seen`);
+        }
+      }
     },
   },
 
