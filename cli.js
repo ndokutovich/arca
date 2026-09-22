@@ -861,9 +861,19 @@ const COMMANDS = {
       const r = flags.sync && !dryRun
         ? CV.syncIfDue({ cooldownMs: 0 })
         : CV.sync({ dryRun: true });
+      if (r.sourceEmpty) {
+        console.log(`Nothing readable in ${CV.claudeHome()} — the snapshot was left alone.`);
+        console.log('Nothing to read is not the same as nothing to keep.');
+        return;
+      }
       const changed = r.added.length + r.changed.length + r.removed.length;
       const total = r.unchanged + r.added.length + r.changed.length;
       console.log(`${total} file(s), ${(r.bytes / 1048576).toFixed(1)} MB from ${CV.claudeHome()}`);
+      console.log(`into ${CV.configDir()}`);
+      const others = CV.configMachines().filter((m) => CV.configDir(m) !== CV.configDir());
+      if (others.length) {
+        console.log(`${others.length} other machine(s) keep a snapshot here: ${others.join(', ')}`);
+      }
       console.log('');
       console.log(`  added     ${r.added.length}`);
       console.log(`  changed   ${r.changed.length}`);
