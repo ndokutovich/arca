@@ -14,11 +14,15 @@
  *   ~/.claude-vault/<project-name>/<session-id>.jsonl
  *   ~/.claude-vault/<project-name>/<session-id>/subagents/...  tool-results/...
  *
- * Incremental: skips files already in vault with same or larger size.
- * Transactional: writes to .tmp then renames before git commit.
+ * Incremental: skips a file whose vault copy has the same or a larger size
+ *   and is not older. A session directory is walked only when its transcript
+ *   moved, once for an orphan, and in full once a day.
+ * Transactional: writes to .tmp-<pid> then renames before git commit.
  * Historical: git log shows full append history, detects replacements.
  *
- * Timeout: 30s in settings.json (plenty for copy + commit).
+ * Timeout: 30 s in settings.json — enough for an ordinary start. The first
+ * mirror of an existing vault is minutes of copying and one large commit, far
+ * past it: run this file once by hand after installing or upgrading.
  */
 
 import fs from 'fs';
@@ -116,7 +120,7 @@ function note(msg) {
 }
 
 // A hook killed mid-commit leaves .git/index.lock, silently breaking all future
-// commits. Clear it if stale (older than 30s — no real git runs that long here).
+// commits.
 // A lock older than half a minute used to be deleted outright. On a vault with
 // thousands of files a legitimate `git add` can take longer than that, and two
 // hooks starting together could each decide the other's live lock was stale —
@@ -169,6 +173,9 @@ const IGNORED = [
   // The id list exists only to diff against the next sample; the log beside
   // it is the part worth keeping.
   '.arca/retention/*.ids',
+  // When session directories were last walked in full. Per machine, and it
+  // changes daily — a commit of it would be noise every day forever.
+  '.arca/session-dirs-walked',
 ];
 
 function ensureGitignore() {
@@ -253,6 +260,29 @@ function copyIfChanged(src, dst) {
   }
 }
 
+// Walking every session directory on every start cost 5.6 s on the machine
+// this was measured on — 7759 files, three stat calls each, on Windows — and
+// the count only grows. A directory changes while its session does: each tool
+// result and each subagent is written during turns that also write the
+// transcript. So a directory is walked when its transcript was copied in this
+// run; an orphan, whose transcript Claude Code has already deleted (251 of 267
+// directories there), is mirrored once and does not change again; and a full
+// walk once a day picks up what was written after its parent's last line — a
+// background agent finishing after the session went quiet. Deciding costs
+// about 70 ms.
+const WALK_STAMP = path.join(VAULT_DIR, '.arca', 'session-dirs-walked');
+const FULL_WALK_MS = 24 * 60 * 60 * 1000;
+
+/** A full walk is due when the stamp is missing, unreadable, from the future, or a day old. */
+function fullWalkDue(now = Date.now()) {
+  try {
+    const at = Date.parse(fs.readFileSync(WALK_STAMP, 'utf8').trim());
+    return !Number.isFinite(at) || at > now || now - at > FULL_WALK_MS;
+  } catch {
+    return true;
+  }
+}
+
 /**
  * Mirror a session directory into the vault, file by file. Links are not
  * followed — one can loop, or point outside the session entirely.
@@ -309,6 +339,7 @@ async function backup() {
   // What the indexer should read: the transcripts above plus the subagent
   // transcripts copied out of session directories.
   const toIndex = [];
+  const fullWalk = fullWalkDue();
 
   const projects = fs.readdirSync(PROJECTS_DIR, { withFileTypes: true })
     .filter(d => d.isDirectory());
@@ -333,9 +364,13 @@ async function backup() {
 
     const vaultProjDir = path.join(VAULT_DIR, proj.name);
 
+    // Sessions whose transcript moved this run — copied, or failed to copy,
+    // which is no evidence that nothing changed.
+    const moved = new Set();
     for (const file of files) {
       const dst = path.join(vaultProjDir, file.name);
       const outcome = copyIfChanged(path.join(projPath, file.name), dst);
+      if (outcome !== 'skipped') moved.add(file.name.slice(0, -'.jsonl'.length));
       if (outcome === 'copied') {
         copied++;
         copiedFiles.push(dst);
@@ -344,13 +379,27 @@ async function backup() {
       else errors++;
     }
 
+    const live = new Set(files.map((f) => f.name.slice(0, -'.jsonl'.length)));
     for (const dir of sessionDirs) {
-      const r = mirrorSessionDir(path.join(projPath, dir.name), path.join(vaultProjDir, dir.name));
+      const dst = path.join(vaultProjDir, dir.name);
+      const walk = fullWalk || (live.has(dir.name) ? moved.has(dir.name) : !fs.existsSync(dst));
+      if (!walk) continue;
+      const r = mirrorSessionDir(path.join(projPath, dir.name), dst);
       dirCopied += r.copied;
       skipped += r.skipped;
       errors += r.errors;
       toIndex.push(...r.transcripts);
     }
+  }
+
+  // Written even when some files failed: a file that keeps failing must not
+  // buy a 6-second walk on every start. A run killed mid-walk writes nothing,
+  // and the next start resumes the walk through the skip rule.
+  if (fullWalk) {
+    try {
+      fs.mkdirSync(path.dirname(WALK_STAMP), { recursive: true });
+      fs.writeFileSync(WALK_STAMP, new Date().toISOString());
+    } catch { /* the next start walks in full again */ }
   }
 
   // Name this machine as the origin of what it just archived, before the
