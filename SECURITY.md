@@ -7,17 +7,20 @@ in git. The vault therefore contains every conversation you have had with an
 assistant on that machine, in full, for as long as you keep it — which is the
 point of the tool and also the thing to understand about it.
 
-It holds three stores:
+It holds four stores:
 
 | Path | Contents |
 |---|---|
 | `~/.claude-vault/<project>/*.jsonl` | session transcripts, copied verbatim |
+| `~/.claude-vault/<project>/<session>/` | what Claude Code keeps beside a transcript: subagent transcripts and tool outputs, copied verbatim |
 | `~/.claude-vault/.arca/history/` | every prompt you typed, including those whose session is gone |
-| `~/.claude-vault/config/` | a snapshot of `~/.claude`: commands, agents, skills, hooks, settings |
+| `~/.claude-vault/config/<machine-id>/` | a snapshot of each machine's `~/.claude`: commands, agents, skills, hooks, settings |
 
 **Transcripts are not filtered.** If you pasted a key, a password, a customer
 record or a private document into a conversation, it is in the transcript, and
-the transcript is in the vault. arca does not scan, redact or mask it. Treat
+the transcript is in the vault. The same holds for tool output: a command
+that printed a `.env` file printed it into `tool-results/`, and that is in the
+vault too. arca does not scan, redact or mask any of it. Treat
 the vault as exactly as sensitive as the most sensitive thing you ever typed
 into a chat.
 

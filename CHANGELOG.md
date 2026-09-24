@@ -9,19 +9,37 @@ because a review found something that had already shipped.
 ## Unreleased
 
 ### Added
-- Subagent sidechains (`agent-*.jsonl`) are archived and indexed. They were
-  excluded everywhere on the reasoning that a sidechain is not a session —
-  true for resuming, false for remembering. A delegated agent's conclusion
-  reaches the main transcript; what it read and discarded does not. Search
-  leaves them out unless asked: `--include-agents`, or `include_agents` on
-  the MCP tool.
+- Session directories are archived. Claude Code keeps a directory beside each
+  transcript — `subagents/` (including `subagents/workflows/wf_*/`), the
+  `tool-results/` the transcript refers to, a `.meta.json` per agent — and
+  deletes it along with the transcript. The hook copied the transcript and
+  walked past the directory; on one working machine that left 1.8 GB outside
+  the vault: 5881 files under `subagents/` and 1858 tool results. They are
+  mirrored now, and `arca restore` brings a session's directory back with it,
+  adding only what is missing and never replacing a live file.
+- Subagent transcripts are indexed as sidechains. They were excluded
+  everywhere on the reasoning that a sidechain is not a session — true for
+  resuming, false for remembering: a delegated agent's conclusion reaches the
+  main transcript, what it read and discarded does not. Search leaves them out
+  unless asked: `--include-agents`, or `include_agents` on the MCP tool.
 - `arca install --replace-hook` takes over a `session-vault` registration
   that belongs to something else. Without it an upgrade from the project
   this grew out of was silently partial: the MCP server appeared and the
   archiving stayed on the old code.
 
+### Fixed
+- Each machine keeps its own config snapshot, under `config/<machine-id>/`.
+  One shared directory made the snapshot a fight rather than a backup: each
+  machine's sync deleted what the other had, and a restore handed you
+  whichever machine had started a session last. A vault with the old flat
+  layout is moved under this machine on its next sync.
+- A sync that cannot read `~/.claude` changes nothing. It used to collect
+  zero files and prune the snapshot to match — deleting all of it in one
+  silent pass, from a hook that runs at every session start.
+
 ### Changed
-- Publishing uses OIDC trusted publishing rather than a stored npm token.
+- Publishing can use OIDC trusted publishing; the stored token stays as a
+  fallback.
 - The thread map shortens project names by the prefix the projects actually
   share, instead of by one machine's directory layout.
 
