@@ -6,7 +6,7 @@ The version numbers are small and the releases are close together because
 this was written quickly and corrected often; several of them exist only
 because a review found something that had already shipped.
 
-## Unreleased
+## 0.12.0 — 2026-09-24
 
 ### Added
 - Session directories are archived. Claude Code keeps a directory beside each
