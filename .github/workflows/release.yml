@@ -79,7 +79,8 @@ jobs:
       # Trusted publishing: npm takes a short-lived OIDC identity scoped to
       # this repository and workflow filename instead of a stored secret.
       # Granular tokens are capped at ninety days and lose direct publish in
-      # January 2027, so the token is the stopgap and this is the path.
+      # January 2027; the stored one expired and blocked a release, so there is
+      # no token here any more, not even as a fallback.
       id-token: write
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -100,29 +101,18 @@ jobs:
       - run: npm ci
 
       # npm answers a failed publish with 404 on PUT, which reads as "package
-      # not found" but means "not authenticated, or not allowed to publish into
-      # this scope". Ask the token who it is first, so the log names the account
-      # instead of leaving the scope/permission question open.
-      - name: Identify the token
+      # not found". Under trusted publishing it almost always means the
+      # configuration on npmjs.com does not match this run: owner, repository
+      # and workflow filename must be exact, case and .yml included. Print what
+      # this run is, so the log can be compared with that page.
+      - name: Publishing identity
         run: |
-          # Shape only - length and prefix class. GitHub masks the value itself,
-          # and a token pasted with a trailing newline or truncated mid-copy is
-          # indistinguishable from a revoked one until you look at its length.
-          LEN=${#NODE_AUTH_TOKEN}
-          case "$NODE_AUTH_TOKEN" in
-            npm_*)  SHAPE="npm_ (automation or granular)" ;;
-            "")     SHAPE="EMPTY - the secret did not reach this step" ;;
-            *)      SHAPE="legacy/unknown prefix" ;;
-          esac
-          echo "token length: $LEN"
-          echo "token shape:  $SHAPE"
-          printf '%s' "$NODE_AUTH_TOKEN" | grep -q '[[:space:]]' && echo "WARNING: token contains whitespace - it was pasted with a newline or space"
-          echo "authenticated as: $(npm whoami || echo '<rejected>')"
-          echo "publishing as:    $(node -p "require('./package.json').name")"
-          echo "npm version:      $(npm --version)  (trusted publishing needs 11.5.1+)"
-          echo "oidc available:   ${ACTIONS_ID_TOKEN_REQUEST_URL:+yes}${ACTIONS_ID_TOKEN_REQUEST_URL:-no}"
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          echo "package:        $(node -p "require('./package.json').name")@$(node -p "require('./package.json').version")"
+          echo "repository:     ${{ github.repository }}"
+          echo "workflow:       ${{ github.workflow_ref }}"
+          echo "node:           $(node --version)  (trusted publishing needs 22.14.0+)"
+          echo "npm:            $(npm --version)  (trusted publishing needs 11.5.1+)"
+          echo "oidc available: ${ACTIONS_ID_TOKEN_REQUEST_URL:+yes}${ACTIONS_ID_TOKEN_REQUEST_URL:-no}"
 
       - name: Publish
         # No --provenance: npm/sigstore provenance requires a PUBLIC source
@@ -134,8 +124,6 @@ jobs:
         # --access public is required: a scoped package defaults to restricted,
         # and a restricted publish on a free account fails outright.
         run: npm publish --access public --tag "${{ needs.validate.outputs.dist_tag }}"
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Summary
         run: |

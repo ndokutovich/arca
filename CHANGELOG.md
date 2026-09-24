@@ -50,8 +50,8 @@ full walk once a day.
   silent pass, from a hook that runs at every session start.
 
 ### Changed
-- Publishing can use OIDC trusted publishing; the stored token stays as a
-  fallback.
+- Publishing goes through npm trusted publishing (OIDC) alone. The stored
+  token expired and held this release back; there is none to expire now.
 - The thread map shortens project names by the prefix the projects actually
   share, instead of by one machine's directory layout.
 
