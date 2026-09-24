@@ -27,6 +27,18 @@ because a review found something that had already shipped.
   this grew out of was silently partial: the MCP server appeared and the
   archiving stayed on the old code.
 
+### Upgrading
+The first session start after upgrading mirrors every existing session
+directory: on a large vault that is minutes of copying and one large commit,
+far past the 30 seconds a hook is given. It converges over later starts, but
+slowly — a `git add` killed at the limit leaves a lock that is only broken
+ten minutes later. Run the hook once by hand instead:
+
+    node "$(npm root -g)/@ndokutovich/arca/hooks/session-vault.js"
+
+After that, a start walks only the directories of sessions that moved, plus a
+full walk once a day.
+
 ### Fixed
 - Each machine keeps its own config snapshot, under `config/<machine-id>/`.
   One shared directory made the snapshot a fight rather than a backup: each
