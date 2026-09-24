@@ -236,10 +236,12 @@ function copyIfChanged(src, dst) {
     } catch { /* re-copy on error */ }
   }
 
-  // Transactional copy: write to .tmp then rename. A run killed halfway
-  // leaves a .tmp (ignored by git), never a truncated file under the real
-  // name — which the next run's size check could take for a finished copy.
-  const tmp = dst + '.tmp';
+  // Transactional copy: write to a temporary name, then rename. A run killed
+  // halfway leaves the temporary (ignored by git), never a truncated file
+  // under the real name — which the next run's size check could take for a
+  // finished copy. The name carries the pid: sessions start together, and two
+  // hooks sharing one .tmp could each rename the other's half-written copy.
+  const tmp = `${dst}.tmp-${process.pid}`;
   try {
     fs.mkdirSync(path.dirname(dst), { recursive: true });
     fs.copyFileSync(src, tmp);
