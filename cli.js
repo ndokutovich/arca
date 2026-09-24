@@ -325,6 +325,8 @@ const COMMANDS = {
         if (r.overwrote) {
           console.log(`  (overwrote the live transcript; the replaced copy is at ${r.preserved})`);
         }
+        if (r.dirFiles) console.log(`  plus ${r.dirFiles} file(s) of its session directory (subagents, tool results)`);
+        if (r.dirFailed) console.log(`  ${r.dirFailed} file(s) of its session directory could not be copied back`);
         if (r.note) console.log(`  note: ${r.note}`);
         console.log('');
         console.log('It will appear in `claude --resume` for that project.');

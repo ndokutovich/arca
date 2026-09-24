@@ -162,7 +162,9 @@ arca restore <session-id>    # put one back where Claude Code reads it
 ```
 
 A restore copies the transcript, byte for byte, into
-`~/.claude/projects/<project>/<id>.jsonl`. Nothing is rewritten. The session
+`~/.claude/projects/<project>/<id>.jsonl`, and puts back whatever is missing from
+the session directory beside it — subagents, tool results. Nothing is rewritten,
+and no file already there is replaced. The session
 reappears in `claude --resume` for that project and the work continues where it
 stopped.
 
@@ -414,7 +416,8 @@ point into this package is reported and left alone.
 If you would rather wire it by hand, the two pieces are these.
 
 **The hook** keeps the archive current. `hooks/session-vault.js` runs on `SessionStart`:
-it copies new and changed session files into `~/.claude-vault/`, claims them for this
+it copies new and changed session files into `~/.claude-vault/` — each with its
+session directory: subagents, workflow agents, tool results — claims them for this
 machine, syncs new prompts, commits, and kicks off incremental indexing.
 
 ```json

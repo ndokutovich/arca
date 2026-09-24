@@ -2,7 +2,8 @@
 /**
  * Incremental indexer for arca.
  *
- * Scans ~/.claude-vault/ for JSONL files, parses into exchanges,
+ * Scans ~/.claude-vault/ for transcripts — each project's top level and the
+ * subagents inside every session directory — parses them into exchanges,
  * generates embeddings, and stores in SQLite with vec + FTS5.
  *
  * Exchange-level delta: hashes each exchange by content,
@@ -14,35 +15,15 @@
  *   node indexer.js --file path  # index single file
  */
 
-import fs from 'fs';
 import path from 'path';
 import os from 'os';
 import { parseTranscript } from './lib/parser.js';
 import { getDb, closeDb, getIndexedIds, upsertExchange, deleteByArchive, upsertEssence, listIndexedArchives } from './lib/db.js';
 import { embedExchange, initEmbeddings } from './lib/embeddings.js';
 import { extractExchangeEssence } from './lib/essence.js';
+import { findArchivedTranscripts, projectOf } from './lib/transcripts.js';
 
 const VAULT_DIR = path.join(os.homedir(), '.claude-vault');
-
-function findJsonlFiles(dir) {
-  const results = [];
-  if (!fs.existsSync(dir)) return results;
-
-  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-    if (entry.isDirectory() && entry.name !== '.git' && entry.name !== 'index') {
-      const projDir = path.join(dir, entry.name);
-      for (const file of fs.readdirSync(projDir, { withFileTypes: true })) {
-        if (file.isFile() && file.name.endsWith('.jsonl')) {
-          results.push({
-            path: path.join(projDir, file.name),
-            project: entry.name,
-          });
-        }
-      }
-    }
-  }
-  return results;
-}
 
 async function indexFile(filePath, project, fullReindex = false) {
   const exchanges = await parseTranscript(filePath, project);
@@ -109,14 +90,18 @@ async function main() {
   let totalFiles = 0;
 
   if (singleFile) {
-    const project = path.basename(path.dirname(singleFile));
+    const project = projectOf(path.resolve(singleFile), VAULT_DIR);
     log(`Indexing ${singleFile}...`);
     const { indexed, skipped } = await indexFile(singleFile, project, fullReindex);
     totalIndexed = indexed;
     totalSkipped = skipped;
     totalFiles = 1;
   } else {
-    const files = findJsonlFiles(VAULT_DIR);
+    // One walk shared with the tests, so what the indexer reads and what the
+    // reconciliation below keeps are the same set. A private top-level-only
+    // copy missed every subagent inside a session directory — and would have
+    // dropped any the hook had indexed as "no longer on disk".
+    const files = findArchivedTranscripts(VAULT_DIR);
     totalFiles = files.length;
     log(`Found ${files.length} JSONL files in vault`);
 

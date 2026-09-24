@@ -13,6 +13,7 @@ import { parseTranscript } from './lib/parser.js';
 import { extractExchangeEssence } from './lib/essence.js';
 import { getDb, closeDb, getIndexedIds, upsertExchange, upsertEssence } from './lib/db.js';
 import { embedExchange, initEmbeddings } from './lib/embeddings.js';
+import { projectOf, isSidechainFile } from './lib/transcripts.js';
 
 const args = process.argv.slice(2);
 
@@ -36,7 +37,12 @@ try {
 
   for (const filePath of files) {
     if (!fs.existsSync(filePath)) continue;
-    const project = path.basename(path.dirname(filePath));
+    // The directory under the vault, not the file's parent: a subagent in
+    // <project>/<session>/subagents/ would otherwise be filed under "subagents".
+    const project = projectOf(path.resolve(filePath));
+    // As in the full indexer: agent-*.jsonl is a sidechain whatever its
+    // entries claim, and one missing the flag would join default results.
+    const sidechain = isSidechainFile(path.basename(filePath));
     const exchanges = await parseTranscript(filePath, project);
     const existingIds = getIndexedIds(filePath);
 
@@ -44,7 +50,7 @@ try {
       if (existingIds.has(exchange.id)) continue;
       const toolNames = exchange.toolCalls?.map(t => t.toolName);
       const embedding = await embedExchange(exchange.userMessage, exchange.assistantMessage, toolNames);
-      upsertExchange(exchange, embedding);
+      upsertExchange(sidechain ? { ...exchange, isSidechain: true } : exchange, embedding);
       // The full indexer writes the essence layer here too. Leaving it out
       // meant every exchange the hook indexed had no decisions, constraints or
       // tensions extracted — the layer was silently only as current as the

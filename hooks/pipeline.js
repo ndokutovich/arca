@@ -33,9 +33,14 @@ if (!packageRoot) {
   process.exit(1);
 }
 
+// --all instead of a file list: the hook copied more than one command line can
+// carry (Windows stops at 32,767 characters), so index the whole vault
+// incrementally — it skips every exchange it already has.
+const all = files[0] === '--all';
+
 // Exchanges first; each derived layer reads what the step before it wrote.
 const STAGES = [
-  ['index-incremental.js', files],
+  all ? ['indexer.js', ['--quiet']] : ['index-incremental.js', files],
   ['build-entities.js', ['--quiet']],
   ['build-kg.js', ['--quiet']],
   ['build-threads.js', ['--quiet']],
@@ -60,4 +65,4 @@ for (const [script, args] of STAGES) {
   ran++;
 }
 
-note(`pipeline: ${ran} stage(s) ok${files.length ? ` for ${files.length} file(s)` : ''}`);
+note(`pipeline: ${ran} stage(s) ok${all ? ' for the whole vault' : files.length ? ` for ${files.length} file(s)` : ''}`);

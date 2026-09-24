@@ -5,12 +5,14 @@
  * Git-backed session backup OUTSIDE ~/.claude/ to survive cleanup bugs.
  *
  * Flow:
- *   1. Copy new/changed session JSONLs from ~/.claude/projects/ → ~/.claude-vault/
+ *   1. Copy new/changed session JSONLs from ~/.claude/projects/ → ~/.claude-vault/,
+ *      and mirror each session's directory (subagents, tool results) beside it
  *   2. git add + git commit (atomic snapshot with timestamp)
  *
  * Vault lives at ~/.claude-vault/ (git repo, local only).
  * Structure mirrors projects/:
  *   ~/.claude-vault/<project-name>/<session-id>.jsonl
+ *   ~/.claude-vault/<project-name>/<session-id>/subagents/...  tool-results/...
  *
  * Incremental: skips files already in vault with same or larger size.
  * Transactional: writes to .tmp then renames before git commit.
@@ -204,6 +206,78 @@ function ensurePackLimits() {
   }
 }
 
+// A session is not one file. Beside each transcript Claude Code keeps a
+// directory named after the session: subagents/ (workflow agents one level
+// deeper, in subagents/workflows/wf_<id>/), tool-results/ that the transcript
+// points at, a .meta.json per agent. The hook used to copy the transcript and
+// walk past the directory, so a vault that was meant to lose nothing lost
+// every subagent newer Claude Code writes and every large tool output — and a
+// restored session came back with references to files that were gone.
+const SESSION_DIR = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * Copy one file into the vault unless the copy there is already current.
+ * 'copied' | 'skipped' | 'error'. One rule for transcripts and for everything
+ * in a session directory, so the two cannot drift apart.
+ */
+function copyIfChanged(src, dst) {
+  // Size is not identity. Transcripts are append-only in normal use, but a
+  // replaced or rewritten one that happens to be the same size or smaller
+  // was skipped forever — and the file's own comment claimed replacements
+  // were detected. Compare size and mtime, and fall back to copying.
+  if (fs.existsSync(dst)) {
+    try {
+      const srcStat = fs.statSync(src);
+      const dstStat = fs.statSync(dst);
+      const sameSize = dstStat.size === srcStat.size;
+      const notOlder = dstStat.mtimeMs >= srcStat.mtimeMs;
+      if (sameSize && notOlder) return 'skipped';
+      if (dstStat.size > srcStat.size && notOlder) return 'skipped';
+    } catch { /* re-copy on error */ }
+  }
+
+  // Transactional copy: write to .tmp then rename. A run killed halfway
+  // leaves a .tmp (ignored by git), never a truncated file under the real
+  // name — which the next run's size check could take for a finished copy.
+  const tmp = dst + '.tmp';
+  try {
+    fs.mkdirSync(path.dirname(dst), { recursive: true });
+    fs.copyFileSync(src, tmp);
+    fs.renameSync(tmp, dst);
+    return 'copied';
+  } catch {
+    try { fs.unlinkSync(tmp); } catch {}
+    return 'error';
+  }
+}
+
+/**
+ * Mirror a session directory into the vault, file by file. Links are not
+ * followed — one can loop, or point outside the session entirely.
+ * `transcripts` lists the subagent transcripts it copied, for the indexer.
+ */
+function mirrorSessionDir(srcDir, dstDir) {
+  const r = { copied: 0, skipped: 0, errors: 0, transcripts: [] };
+  const walk = (src, dst, inSubagents) => {
+    let entries;
+    try { entries = fs.readdirSync(src, { withFileTypes: true }); } catch { r.errors++; return; }
+    for (const e of entries) {
+      const from = path.join(src, e.name);
+      const to = path.join(dst, e.name);
+      if (e.isDirectory()) { walk(from, to, inSubagents || e.name === 'subagents'); continue; }
+      if (!e.isFile()) continue;
+      const outcome = copyIfChanged(from, to);
+      if (outcome === 'copied') {
+        r.copied++;
+        if (inSubagents && e.name.endsWith('.jsonl')) r.transcripts.push(to);
+      } else if (outcome === 'skipped') r.skipped++;
+      else r.errors++;
+    }
+  };
+  walk(srcDir, dstDir, false);
+  return r;
+}
+
 // Async only because the machine manifest is an ESM module loaded on demand;
 // everything else here is deliberately synchronous.
 async function backup() {
@@ -225,7 +299,14 @@ async function backup() {
   let copied = 0;
   let skipped = 0;
   let errors = 0;
+  // Transcripts copied this run: what the machine claims and the commit
+  // message counts. Session-directory files are not sessions, so they are
+  // counted apart and never claimed.
   const copiedFiles = [];
+  let dirCopied = 0;
+  // What the indexer should read: the transcripts above plus the subagent
+  // transcripts copied out of session directories.
+  const toIndex = [];
 
   const projects = fs.readdirSync(PROJECTS_DIR, { withFileTypes: true })
     .filter(d => d.isDirectory());
@@ -233,49 +314,40 @@ async function backup() {
   for (const proj of projects) {
     const projPath = path.join(PROJECTS_DIR, proj.name);
 
-    // Find session JSONLs at project root (not in subagents/ subdirs)
-    let files;
+    // Transcripts at the project's top level; beside them, a directory per
+    // session. memory/ and anything else not named like a session belongs to
+    // somebody else — the config snapshot keeps memory/.
+    let entries;
     try {
-      files = fs.readdirSync(projPath, { withFileTypes: true })
-        .filter(f => f.isFile() && f.name.endsWith('.jsonl'));
+      entries = fs.readdirSync(projPath, { withFileTypes: true });
     } catch { continue; }
+    const files = entries.filter(f => f.isFile() && f.name.endsWith('.jsonl'));
+    const sessionDirs = entries.filter(d => d.isDirectory() && SESSION_DIR.test(d.name));
 
-    if (files.length === 0) continue;
+    // A project with session directories and no transcripts is exactly what
+    // Claude Code's cleanup leaves behind: it deletes the .jsonl and keeps the
+    // directory. Skipping it for having no transcripts would lose the rest.
+    if (files.length === 0 && sessionDirs.length === 0) continue;
 
     const vaultProjDir = path.join(VAULT_DIR, proj.name);
 
     for (const file of files) {
-      const src = path.join(projPath, file.name);
       const dst = path.join(vaultProjDir, file.name);
-      const tmp = dst + '.tmp';
-
-      // Size is not identity. Transcripts are append-only in normal use, but a
-      // replaced or rewritten one that happens to be the same size or smaller
-      // was skipped forever — and the file's own comment claimed replacements
-      // were detected. Compare size and mtime, and fall back to copying.
-      if (fs.existsSync(dst)) {
-        try {
-          const srcStat = fs.statSync(src);
-          const dstStat = fs.statSync(dst);
-          const sameSize = dstStat.size === srcStat.size;
-          const notOlder = dstStat.mtimeMs >= srcStat.mtimeMs;
-          if (sameSize && notOlder) { skipped++; continue; }
-          if (dstStat.size > srcStat.size && notOlder) { skipped++; continue; }
-        } catch { /* re-copy on error */ }
-      }
-
-      // Transactional copy: write to .tmp then rename
-      try {
-        if (!fs.existsSync(vaultProjDir)) fs.mkdirSync(vaultProjDir, { recursive: true });
-        fs.copyFileSync(src, tmp);
-        fs.renameSync(tmp, dst);
+      const outcome = copyIfChanged(path.join(projPath, file.name), dst);
+      if (outcome === 'copied') {
         copied++;
         copiedFiles.push(dst);
-      } catch {
-        // Clean up failed tmp
-        try { fs.unlinkSync(tmp); } catch {}
-        errors++;
-      }
+        toIndex.push(dst);
+      } else if (outcome === 'skipped') skipped++;
+      else errors++;
+    }
+
+    for (const dir of sessionDirs) {
+      const r = mirrorSessionDir(path.join(projPath, dir.name), path.join(vaultProjDir, dir.name));
+      dirCopied += r.copied;
+      skipped += r.skipped;
+      errors += r.errors;
+      toIndex.push(...r.transcripts);
     }
   }
 
@@ -361,9 +433,10 @@ async function backup() {
     try { dirty = gitRead(['status', '--porcelain']) || ''; } catch { dirty = ''; }
     if (dirty.trim()) {
       const pending = dirty.trim().split(String.fromCharCode(10)).length;
-      const msg = copied > 0
-        ? `vault: ${copied} sessions (${new Date().toISOString().slice(0, 19)})`
-        : `vault: ${pending} pending changes (${new Date().toISOString().slice(0, 19)})`;
+      const stamp = new Date().toISOString().slice(0, 19);
+      const msg = copied > 0 || dirCopied > 0
+        ? `vault: ${copied} sessions${dirCopied ? `, ${dirCopied} session-dir files` : ''} (${stamp})`
+        : `vault: ${pending} pending changes (${stamp})`;
       gitExec(['add', '-A']);
       // The vault ignores index/, models/, *.tmp and *.log for its own
       // artifacts, and those names are ordinary inside somebody's skills.
@@ -377,14 +450,14 @@ async function backup() {
   // Append to log
   try {
     const logFile = path.join(VAULT_DIR, 'vault.log');
-    const line = `${new Date().toISOString()} copied=${copied} skipped=${skipped} errors=${errors}\n`;
+    const line = `${new Date().toISOString()} copied=${copied} dir=${dirCopied} skipped=${skipped} errors=${errors}\n`;
     fs.appendFileSync(logFile, line);
   } catch {}
 
   // Trigger arca incremental indexing for copied files (fire-and-forget)
   // ARCA_HOOK_NO_INDEX lets the hook's own test exercise copy + commit
   // without spawning the indexer, which would pull the embedding model.
-  if (copiedFiles.length > 0 && !process.env.ARCA_HOOK_NO_INDEX) {
+  if (toIndex.length > 0 && !process.env.ARCA_HOOK_NO_INDEX) {
     try {
       const vm = vaultMemoryDir();
       if (vm) {
@@ -394,7 +467,16 @@ async function backup() {
         const runner = path.join(__dirname, 'pipeline.js');
         if (!fs.existsSync(runner)) { note('missing pipeline.js'); }
         else {
-          const child = spawn('node', [runner, vm, ...copiedFiles], { stdio: 'ignore', detached: true });
+          // Windows caps a command line at 32,767 characters. The first run on
+          // a machine with thousands of files — or the first after session
+          // directories began to be mirrored — overflowed it, the spawn threw,
+          // and nothing copied in that run was ever indexed by the hook. Past
+          // the budget, ask for one incremental pass over the whole vault; it
+          // skips whatever is already indexed.
+          const ARGV_BUDGET = 24000;
+          const argLength = toIndex.reduce((n, f) => n + f.length + 3, 0);
+          const targets = argLength > ARGV_BUDGET ? ['--all'] : toIndex;
+          const child = spawn('node', [runner, vm, ...targets], { stdio: 'ignore', detached: true });
           child.unref();
         }
       }
