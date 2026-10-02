@@ -6,6 +6,31 @@ The version numbers are small and the releases are close together because
 this was written quickly and corrected often; several of them exist only
 because a review found something that had already shipped.
 
+## 0.12.1 — 2026-10-02
+
+### Fixed
+- A claude.ai import no longer throws away the work a conversation produced. A
+  message keeps its text in one place and its tool calls in another, and the
+  importer read only the text: an artifact's HTML, a `create_file`'s body, every
+  `str_replace` edit and every widget's code were dropped — while the rendered
+  placeholder, "This block is not supported on your current device yet", was
+  kept in their place. One export carried 1671 artifacts, 1186 edits and 607
+  file writes across its 314 web conversations; 5687 tool calls in all. The
+  export was complete the whole time and none of it reached the vault. Tool
+  calls are rendered now, with `old_str` and `new_str` both kept so an edit can
+  be replayed rather than only read, and the run reports how many it kept.
+- A message whose text blocks are empty keeps its words. Twelve messages in one
+  export hold the prose in `text` alone, and rendering the blocks dropped them.
+- The vault path is resolved when the import runs, not when the module loads.
+  Read once at startup, it could not be pointed at another home — which is also
+  what the tests needed to run in a sandbox.
+
+### Upgrading
+Re-run the import to recover what earlier versions left behind: `arca import
+<dir>`, then `arca index`. Only conversations whose content actually changes are
+rewritten, so a second run over an unchanged export writes nothing. The vault
+grows: an artifact-heavy conversation roughly doubles.
+
 ## 0.12.0 — 2026-09-24
 
 ### Added
