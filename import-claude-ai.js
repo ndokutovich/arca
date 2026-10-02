@@ -33,10 +33,10 @@ import path from 'path';
 import { execFileSync } from 'child_process';
 import { fileURLToPath } from 'url';
 import { StringDecoder } from 'string_decoder';
-import { slug, line as transcriptLine, messageText, writeConversation, newStats }
+import { slug, line as transcriptLine, messageText, messageToolCalls, writeConversation, newStats }
   from './lib/transcript-write.js';
+import { vaultDir } from './lib/transcripts.js';
 
-const VAULT_DIR = path.join(os.homedir(), '.claude-vault');
 const SOURCE = 'claude_ai';
 
 const NL = String.fromCharCode(10);
@@ -111,11 +111,12 @@ const line = (role, text, ts, sessionId) =>
   transcriptLine({ role, text, ts, sessionId, source: SOURCE });
 
 function importConversations(file, stats, dryRun) {
-  const dest = path.join(VAULT_DIR, 'claude-ai-web');
+  const dest = path.join(vaultDir(), 'claude-ai-web');
   for (const conv of streamArrayObjects(file)) {
     const msgs = conv.chat_messages || [];
     const rows = [];
     for (const m of msgs) {
+      stats.toolCalls += messageToolCalls(m);
       const text = messageText(m);
       if (!text.trim()) continue;
       const role = m.sender === 'assistant' ? 'assistant' : 'user';
@@ -133,9 +134,10 @@ function importDesignChats(dir, stats, dryRun) {
     let chat;
     try { chat = JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8')); } catch (_) { stats.unreadable++; continue; }
     const project = slug(chat.project && chat.project.name);
-    const dest = path.join(VAULT_DIR, 'claude-ai-design-' + project);
+    const dest = path.join(vaultDir(), 'claude-ai-design-' + project);
     const rows = [];
     for (const m of chat.messages || []) {
+      stats.toolCalls += messageToolCalls(m);
       const text = messageText(m);
       if (!text.trim()) continue;
       const role = m.role === 'assistant' ? 'assistant' : 'user';
@@ -154,7 +156,7 @@ function importDesignChats(dir, stats, dryRun) {
 function importProjects(dir, stats, dryRun) {
   let files = [];
   try { files = fs.readdirSync(dir).filter((f) => f.endsWith('.json')); } catch (_) { return; }
-  const dest = path.join(VAULT_DIR, 'claude-ai-projects');
+  const dest = path.join(vaultDir(), 'claude-ai-projects');
   for (const f of files) {
     let proj;
     try { proj = JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8')); } catch (_) { stats.unreadable++; continue; }
@@ -258,7 +260,8 @@ function main() {
   console.error(
     `${dryRun ? '[dry-run] ' : ''}conversations ${stats.conversations}: ` +
     `${stats.created} new, ${stats.updated} changed, ${stats.unchanged} unchanged, ` +
-    `${stats.empty} empty, ${stats.unreadable} unreadable`
+    `${stats.empty} empty, ${stats.unreadable} unreadable, ` +
+    `${stats.toolCalls} tool call(s) kept`
   );
   if (!dryRun && (stats.created || stats.updated)) {
     console.error('next: arca index   (picks the new files up incrementally)');
