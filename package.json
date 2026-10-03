@@ -1,6 +1,6 @@
 {
   "name": "@ndokutovich/arca",
-  "version": "0.12.1",
+  "version": "0.12.2",
   "description": "A vault for everything Claude Code throws away: session transcripts kept in git and indexed — hybrid search, cross-session topic threads, cross-project entities, and a temporal knowledge graph.",
   "type": "module",
   "main": "mcp-server.js",

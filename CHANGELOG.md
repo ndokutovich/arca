@@ -6,6 +6,26 @@ The version numbers are small and the releases are close together because
 this was written quickly and corrected often; several of them exist only
 because a review found something that had already shipped.
 
+## 0.12.2 — 2026-10-03
+
+### Added
+- `command/vault-maintenance.md` — what to do when the vault's git store grows
+  out of proportion to the archive it holds. A vault that keeps every version of
+  every transcript is always larger than its tree; the question is by how much.
+  In one vault it was 241 GB against 8.3 GB, and the cause was a single session:
+  892 MB, committed 580 times. `core.bigFileThreshold` defaults to 512m and git
+  will not deltify above it, so every change cost the full size — 138 GB for one
+  file's history. The command carries the diagnosis, a sample measurement to
+  take before repacking hundreds of gigabytes on faith, and the batched repack
+  that does the work safely: small windows on the oversized objects, a deep one
+  on the rest, `prune-packed` after each batch so a run stopped by memory or a
+  clock resumes where it left off. Five traps are named, all met on the way. It
+  produced `.git` 241 → 61 GB, loose objects 150 GiB → 0, 3138 commits intact,
+  free space 26 → 195 GB.
+- Chunking large transcripts is recorded there as the cure that is not done: it
+  needs a split and join that `restore` reverses exactly, and until that exists
+  the archive stays as it is.
+
 ## 0.12.1 — 2026-10-02
 
 ### Fixed
