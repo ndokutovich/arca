@@ -452,6 +452,11 @@ sessions.
 `skill/SKILL.md` and `agent/search-conversations.md` are installable Claude Code
 surfaces for the same thing, if you prefer a skill over an MCP server.
 
+`command/vault-maintenance.md` is the other end of that: what to do when the
+vault's `.git` grows out of proportion to the archive it holds — how to read
+`git count-objects`, why a 892 MB transcript costs its full size on every
+commit, and the batched repack that took one vault from 241 GB to 60 GB.
+
 ## Importing claude.ai history
 
 A claude.ai data export can be folded into the same index:
