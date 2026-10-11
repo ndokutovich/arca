@@ -132,7 +132,7 @@ const COMMANDS = {
       'has to be present, which is the precise end of the tool.',
     ],
     flags: {
-      mode: { value: 'both|vector|text', describe: 'retrieval mode (default both)' },
+      mode: { value: 'hybrid|semantic|keyword', describe: 'retrieval mode (default hybrid)' },
       limit: F.limit,
       after: { value: 'YYYY-MM-DD', describe: 'only after this date' },
       before: { value: 'YYYY-MM-DD', describe: 'only before this date' },
@@ -147,9 +147,9 @@ const COMMANDS = {
     ],
     async run({ flags, positional }) {
       if (!positional.length) fail('search needs a query');
-      const mode = flags.mode || 'both';
-      if (!['both', 'vector', 'text'].includes(mode)) {
-        fail(`--mode wants both, vector or text, got "${mode}"`);
+      const mode = flags.mode || 'hybrid';
+      if (!['hybrid', 'semantic', 'keyword'].includes(mode)) {
+        fail(`--mode wants hybrid, semantic or keyword, got "${mode}"`);
       }
       const opts = {
         mode,
@@ -199,7 +199,7 @@ const COMMANDS = {
     async run() {
       dbModule = await lazy.db();
       const s = dbModule.getStats();
-      console.log(`arca index: ${s.exchanges} exchanges, ${s.projects} projects, ${s.files} files`);
+      console.log(`arca index: ${s.turns} turns, ${s.projects} projects, ${s.files} files`);
       let prompts = null;
       try { prompts = dbModule.promptStats(); } catch { /* table may predate this */ }
       const layers = [
@@ -220,7 +220,7 @@ const COMMANDS = {
         console.log('');
         console.log('  assistants');
         for (const r of s.sources) {
-          console.log(`    ${(r.source || '(unknown)').padEnd(14)} ${String(r.count).padStart(7)} exchanges  ${r.sessions} sessions`);
+          console.log(`    ${(r.source || '(unknown)').padEnd(14)} ${String(r.count).padStart(7)} turns  ${r.sessions} sessions`);
         }
       }
 
@@ -229,7 +229,7 @@ const COMMANDS = {
         console.log('  machines');
         for (const m of s.machines) {
           const who = m.machine || '(unclaimed)';
-          console.log(`    ${who.padEnd(16)} ${String(m.count).padStart(7)} exchanges  ${m.projects} projects`);
+          console.log(`    ${who.padEnd(16)} ${String(m.count).padStart(7)} turns  ${m.projects} projects`);
         }
       }
       if (s.shared_projects?.length) {
@@ -260,7 +260,7 @@ const COMMANDS = {
         const { live } = await import('./lib/retention.js');
         const here = live();
         const archived = (await import('./lib/db.js')).getDb()
-          .prepare("SELECT DISTINCT session_id FROM exchanges WHERE source = 'claude_code' AND session_id IS NOT NULL")
+          .prepare("SELECT DISTINCT session_id FROM turns WHERE source = 'claude_code' AND session_id IS NOT NULL")
           .all().map((x) => String(x.session_id));
         const orphaned = archived.filter((id) => !here.has(id)).length;
         if (orphaned) console.log(`    ${orphaned} archived session(s) no longer exist there`);
@@ -274,7 +274,7 @@ const COMMANDS = {
   },
 
   index: {
-    summary: 'fold new exchanges into the index',
+    summary: 'fold new turns into the index',
     usage: 'arca index [--full]',
     detail: [
       'Incremental by default and safe to re-run. --full re-reads every archive',
@@ -351,7 +351,7 @@ const COMMANDS = {
       console.log('');
       for (const r of rows) {
         const when = r.last ? `${r.first} -> ${r.last}` : '(not indexed)';
-        const ex = r.exchanges ? `${r.exchanges} exchanges` : '';
+        const ex = r.turns ? `${r.turns} turns` : '';
         console.log(`  ${r.id}  ${human(r.bytes).padStart(8)}  ${when}  ${ex}`);
         console.log(`    ${r.project}`);
       }
@@ -456,7 +456,7 @@ const COMMANDS = {
       'and folds them into the index. Nothing is copied wholesale: only entries',
       'newer than what is already stored, so the vault copy stays append-only.',
       '',
-      'A prompt is an orphan when no exchange in the index opens with it. Those',
+      'A prompt is an orphan when no turn in the index opens with it. Those',
       'are the ones nothing else can recover.',
     ],
     flags: {
@@ -732,7 +732,7 @@ const COMMANDS = {
       try {
         dbModule = await lazy.db();
         const labelled = dbModule.syncMachines(M.owners());
-        if (labelled) console.log(`Labelled ${labelled} exchange(s) in the index.`);
+        if (labelled) console.log(`Labelled ${labelled} turn(s) in the index.`);
       } catch { /* the manifest is the record; the index is derived */ }
 
       const rows = M.machines();

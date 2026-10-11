@@ -59,8 +59,8 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
           },
           mode: {
             type: 'string',
-            enum: ['vector', 'text', 'both'],
-            default: 'both',
+            enum: ['semantic', 'keyword', 'hybrid'],
+            default: 'hybrid',
             description: 'Search mode: vector (semantic), text (FTS5+BM25), both (RRF fusion)',
           },
           limit: { type: 'number', minimum: 1, maximum: 50, default: 10 },
@@ -129,7 +129,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     },
     {
       name: 'stats',
-      description: 'Get arca index statistics: total exchanges, projects, files, system-noise count, essence extracts, prompt-kind distribution.',
+      description: 'Get arca index statistics: total turns, projects, files, system-noise count, essence extracts, prompt-kind distribution.',
       inputSchema: { type: 'object', properties: {}, additionalProperties: false },
       annotations: {
         title: 'Vault Stats',
@@ -429,7 +429,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const { name, arguments: args } = request.params;
 
     if (name === 'search') {
-      const { query, mode = 'both', limit = 10, after, before, project, source, include_agents = false, response_format = 'markdown' } = args;
+      const { query, mode = 'hybrid', limit = 10, after, before, project, source, include_agents = false, response_format = 'markdown' } = args;
 
       let resultText;
 
@@ -482,7 +482,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       const stats = getStats();
       const lines = [
         'arca index:',
-        `- ${stats.exchanges} exchanges`,
+        `- ${stats.turns} turns`,
         `- ${stats.projects} projects`,
         `- ${stats.files} session files`,
         `- ${stats.system_noise} system-injected (filtered)`,
@@ -492,10 +492,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         `- ${stats.observations} observations`,
         `- ${stats.threads} threads (${stats.cross_session_threads} cross-session)`,
       ];
-      if (stats.prompt_kinds && stats.prompt_kinds.length) {
+      if (stats.prompt_classs && stats.prompt_classs.length) {
         lines.push('', 'Prompt kinds:');
-        for (const k of stats.prompt_kinds.slice(0, 12)) {
-          lines.push(`  ${k.prompt_kind.padEnd(18)} ${k.count}`);
+        for (const k of stats.prompt_classs.slice(0, 12)) {
+          lines.push(`  ${k.prompt_class.padEnd(18)} ${k.count}`);
         }
       }
       return { content: [{ type: 'text', text: lines.join('\n') }] };
@@ -510,7 +510,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       if (project)  { conds.push('project LIKE ?'); params.push(`%${project}%`); }
       params.push(limit);
       const rows = db.prepare(`
-        SELECT text, category, speaker, project, exchange_id
+        SELECT text, category, speaker, project, turn_id
         FROM fts_essence
         WHERE ${conds.join(' AND ')}
         LIMIT ?
@@ -526,19 +526,19 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     if (name === 'operator_profile') {
       const { project, group_by = 'none' } = args;
       const db = getDb();
-      const where = ['is_system_noise = 0', 'prompt_kind IS NOT NULL'];
+      const where = ['is_noise = 0', 'prompt_class IS NOT NULL'];
       const params = [];
       if (project) { where.push('project LIKE ?'); params.push(`%${project}%`); }
       if (group_by === 'project') {
         const rows = db.prepare(`
-          SELECT project, prompt_kind, COUNT(*) as count
-          FROM exchanges WHERE ${where.join(' AND ')}
-          GROUP BY project, prompt_kind
+          SELECT project, prompt_class, COUNT(*) as count
+          FROM turns WHERE ${where.join(' AND ')}
+          GROUP BY project, prompt_class
           ORDER BY project, count DESC
         `).all(...params);
         const byProj = {};
         for (const r of rows) {
-          (byProj[r.project] = byProj[r.project] || []).push([r.prompt_kind, r.count]);
+          (byProj[r.project] = byProj[r.project] || []).push([r.prompt_class, r.count]);
         }
         const lines = ['Operator profile by project:', ''];
         for (const [proj, kinds] of Object.entries(byProj)) {
@@ -552,17 +552,17 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         return { content: [{ type: 'text', text: lines.join('\n') }] };
       }
       const rows = db.prepare(`
-        SELECT prompt_kind, COUNT(*) as count
-        FROM exchanges WHERE ${where.join(' AND ')}
-        GROUP BY prompt_kind ORDER BY count DESC
+        SELECT prompt_class, COUNT(*) as count
+        FROM turns WHERE ${where.join(' AND ')}
+        GROUP BY prompt_class ORDER BY count DESC
       `).all(...params);
       const total = rows.reduce((s, r) => s + r.count, 0) || 1;
       const lines = [`Operator profile${project ? ' [' + project + ']' : ''}:`, ''];
       for (const r of rows) {
-        lines.push(`  ${r.prompt_kind.padEnd(18)} ${String(r.count).padStart(6)}  ${(100 * r.count / total).toFixed(1)}%`);
+        lines.push(`  ${r.prompt_class.padEnd(18)} ${String(r.count).padStart(6)}  ${(100 * r.count / total).toFixed(1)}%`);
       }
-      const goApprove = rows.filter(r => ['GO', 'APPROVE'].includes(r.prompt_kind)).reduce((s, r) => s + r.count, 0);
-      const steer = rows.find(r => r.prompt_kind === 'STEER')?.count || 0;
+      const goApprove = rows.filter(r => ['GO', 'APPROVE'].includes(r.prompt_class)).reduce((s, r) => s + r.count, 0);
+      const steer = rows.find(r => r.prompt_class === 'STEER')?.count || 0;
       lines.push('', `GO+APPROVE / STEER ratio: ${steer ? (goApprove / steer).toFixed(1) : '∞'}`);
       return { content: [{ type: 'text', text: lines.join('\n') }] };
     }
@@ -570,18 +570,18 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     if (name === 'recent_status_pings') {
       const { project, limit = 15 } = args;
       const db = getDb();
-      const where = ['prompt_kind = ?', 'is_system_noise = 0'];
+      const where = ['prompt_class = ?', 'is_noise = 0'];
       const params = ['STATUS'];
       if (project) { where.push('project LIKE ?'); params.push(`%${project}%`); }
       params.push(limit);
       const rows = db.prepare(`
-        SELECT project, timestamp, user_message, substr(assistant_message, 1, 240) as reply_head
-        FROM exchanges WHERE ${where.join(' AND ')}
+        SELECT project, timestamp, prompt_text, substr(reply_text, 1, 240) as reply_head
+        FROM turns WHERE ${where.join(' AND ')}
         ORDER BY timestamp DESC LIMIT ?
       `).all(...params);
       const lines = [`Recent STATUS pings${project ? ' in ' + project : ''} — ${rows.length} hits`, ''];
       for (const r of rows) {
-        const head = r.user_message.split('\n', 1)[0].slice(0, 120);
+        const head = r.prompt_text.split('\n', 1)[0].slice(0, 120);
         const reply = (r.reply_head || '').replace(/\s+/g, ' ').slice(0, 200);
         lines.push(`[${r.timestamp.slice(0, 16)}] (${r.project})`);
         lines.push(`  Q: ${head}`);
@@ -761,7 +761,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       const lines = [`Topic-threads — span >= ${min_sessions} sessions${project ? ' · ' + project : ''} — ${rows.length}`, ''];
       for (const t of rows) {
         const ret = t.return_count ? `⤺${String(t.return_count).padStart(3)}` : '    ';
-        lines.push(`#${String(t.id).padStart(3)} ${String(t.n_exchanges).padStart(4)}ex ${String(t.n_sessions).padStart(2)}sess ${String(t.n_projects).padStart(2)}proj ${ret}  ${t.label}`);
+        lines.push(`#${String(t.id).padStart(3)} ${String(t.n_turns).padStart(4)}ex ${String(t.n_sessions).padStart(2)}sess ${String(t.n_projects).padStart(2)}proj ${ret}  ${t.label}`);
       }
       return { content: [{ type: 'text', text: lines.join('\n') }] };
     }
@@ -774,7 +774,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       const lines = [`Threads matching "${query}" — ${rows.length}`, ''];
       for (const t of rows) {
         const ret = t.return_count ? `⤺${t.return_count}` : '';
-        lines.push(`#${t.id} [${t.n_exchanges}ex ${t.n_sessions}sess ${t.n_projects}proj ${ret}]  ${t.label}`);
+        lines.push(`#${t.id} [${t.n_turns}ex ${t.n_sessions}sess ${t.n_projects}proj ${ret}]  ${t.label}`);
         lines.push(`     ${(t.first_ts || '').slice(0, 10)} → ${(t.last_ts || '').slice(0, 10)} · ${JSON.parse(t.projects || '[]').join(', ')}`);
       }
       return { content: [{ type: 'text', text: lines.join('\n') }] };
@@ -787,14 +787,14 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       const { thread, segments } = data;
       const lines = [
         `# Thread #${thread.id}: ${thread.label}`,
-        `${thread.n_exchanges} exchanges · ${thread.n_segments} segments · ${thread.n_sessions} sessions · ${thread.n_projects} projects · ${thread.return_count} returns`,
+        `${thread.n_turns} turns · ${thread.n_segments} segments · ${thread.n_sessions} sessions · ${thread.n_projects} projects · ${thread.return_count} returns`,
         `${(thread.first_ts || '').slice(0, 10)} → ${(thread.last_ts || '').slice(0, 10)}`,
         `projects: ${JSON.parse(thread.projects || '[]').join(', ')}`,
         '',
         'Segments in timeline order:',
       ];
       for (const s of segments) {
-        lines.push(`  ${(s.ts_start || '').slice(0, 10)} ${String(s.n_exchanges).padStart(3)}ex  [${s.project}]  "${s.summary || ''}"`);
+        lines.push(`  ${(s.ts_start || '').slice(0, 10)} ${String(s.n_turns).padStart(3)}ex  [${s.project}]  "${s.summary || ''}"`);
       }
       return { content: [{ type: 'text', text: lines.join('\n') }] };
     }

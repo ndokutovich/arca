@@ -27,7 +27,7 @@ Multi-concept AND search (all terms must appear in same conversation):
 node cli.js search "concept1" "concept2" --limit 10 2>/dev/null
 ```
 
-Flags: `--mode vector|text|both` `--limit N` `--after YYYY-MM-DD` `--before YYYY-MM-DD` `--project name`
+Flags: `--mode semantic|keyword|hybrid` `--limit N` `--after YYYY-MM-DD` `--before YYYY-MM-DD` `--project name`
 
 Read full conversations for top results using the Read tool on the file paths returned.
 
@@ -65,7 +65,7 @@ Status: [Read in detail | Reviewed summary only | Skimmed]
 
 Main agent can:
 - Ask you to dig deeper into specific source (#1, #2, etc.)
-- Ask you to read adjacent exchanges in a conversation
+- Ask you to read adjacent turns in a conversation
 - Ask you to search with refined query
 
 ## Critical Rules

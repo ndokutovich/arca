@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * Threads derivation pass — recovers topic-threads from sessions and links
- * them across the whole corpus. Reads already-indexed exchanges and their
+ * them across the whole corpus. Reads already-indexed turns and their
  * embeddings (NO re-embedding), segments each session by semantic drift,
  * then clusters segments globally into cross-session threads.
  *
@@ -34,7 +34,7 @@ function main() {
   };
 
   const db = getDb();
-  const where = ['is_system_noise = 0', 'session_id IS NOT NULL'];
+  const where = ['is_noise = 0', 'session_id IS NOT NULL'];
   const params = [];
   // --project used to filter the scan, and the rebuild then replaced the
   // global thread tables with that subset — every other project's threads
@@ -43,14 +43,14 @@ function main() {
   // to what is reported, not to what is rebuilt.
 
   const rows = db.prepare(`
-    SELECT id, project, session_id, timestamp, line_start, user_message, assistant_message
-    FROM exchanges WHERE ${where.join(' AND ')}
-    ORDER BY session_id, timestamp ASC, line_start ASC
+    SELECT id, project, session_id, timestamp, first_line, prompt_text, reply_text
+    FROM turns WHERE ${where.join(' AND ')}
+    ORDER BY session_id, timestamp ASC, first_line ASC
   `).all(...params);
-  log(`Scanning ${rows.length} exchanges...`);
+  log(`Scanning ${rows.length} turns...`);
 
   // pull embeddings; group into sessions
-  const vecStmt = db.prepare('SELECT embedding FROM vec_exchanges WHERE id = ?');
+  const vecStmt = db.prepare('SELECT embedding FROM vec_turns WHERE id = ?');
   const bySession = new Map();
   let missing = 0;
   for (const r of rows) {
@@ -61,8 +61,8 @@ function main() {
     if (!bySession.has(r.session_id)) bySession.set(r.session_id, []);
     bySession.get(r.session_id).push({
       id: r.id, project: r.project, ts: r.timestamp,
-      text: `${r.user_message || ''} ${r.assistant_message || ''}`,
-      summary: (r.user_message || '').replace(/\s+/g, ' '),
+      text: `${r.prompt_text || ''} ${r.reply_text || ''}`,
+      summary: (r.prompt_text || '').replace(/\s+/g, ' '),
       emb,
     });
   }
@@ -72,7 +72,7 @@ function main() {
     if (items.length < MIN_SESS_EX) continue;
     sessions.push({ sessionId: sid, project: items[0].project, items });
   }
-  log(`  ${bySession.size} sessions, ${sessions.length} with >=${MIN_SESS_EX} exchanges (${missing} exchanges lacked embeddings)`);
+  log(`  ${bySession.size} sessions, ${sessions.length} with >=${MIN_SESS_EX} turns (${missing} turns lacked embeddings)`);
 
   const t0 = Date.now();
   const { segments, commonEntities } = buildThreads(sessions, opts);
@@ -93,7 +93,7 @@ function main() {
     console.error(`\nTop cross-session threads (γ=${opts.gamma}):`);
     for (const t of cross) {
       console.error(
-        `  ${String(t.n_exchanges).padStart(4)}ex ${String(t.n_sessions).padStart(2)}sess ` +
+        `  ${String(t.n_turns).padStart(4)}ex ${String(t.n_sessions).padStart(2)}sess ` +
         `${t.n_projects}proj ${t.return_count ? '⤺' + String(t.return_count).padStart(2) : '   '}  ${t.label}`
       );
     }

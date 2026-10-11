@@ -9,8 +9,9 @@ Claude Code writes every session to `~/.claude/projects/` as JSONL and never rea
 again. Compaction throws away the conversation the current session can no longer hold.
 Cleanup throws away the file. This keeps both, in git, and makes them searchable.
 
-Everything runs locally. Embeddings are computed on your machine; nothing is sent
-anywhere.
+Everything runs locally. Embeddings are computed on your machine and no
+conversation leaves it — the one outbound request arca makes is the first-run
+download of the embedding model, from Hugging Face.
 
 ## What it gives you
 
@@ -18,7 +19,7 @@ Four layers, each answering a different question, built from the same transcript
 
 | Layer | Question it answers |
 |---|---|
-| **Search** | "Have I solved this before?" — hybrid vector + FTS5 over every exchange |
+| **Search** | "Have I solved this before?" — hybrid vector + FTS5 over every turn |
 | **Essence** | "What was decided?" — decisions, constraints, tensions and anti-patterns, extracted |
 | **Entities** | "Where else does this appear?" — tools, tech and concepts ranked by how many projects they span |
 | **Threads** | "Where did this line of thought go?" — topic clusters linked across sessions |
@@ -78,7 +79,7 @@ arca prompts "query"      # search what you typed, session or no session
 arca read <path>          # print a conversation as markdown
 arca stats                # what the vault and the index hold
 
-arca index                # fold new exchanges in (incremental, safe to re-run)
+arca index                # fold new turns in (incremental, safe to re-run)
 arca index --full         # rebuild from every archive, and reconcile
 
 arca restore              # sessions Claude Code no longer has
@@ -104,7 +105,7 @@ Nineteen, all read-only unless noted.
 
 | Tool | For |
 |---|---|
-| `search` | hybrid vector + FTS5 over every exchange; 2-5 concepts for an AND |
+| `search` | hybrid vector + FTS5 over every turn; 2-5 concepts for an AND |
 | `read` | one conversation in full, with line-range pagination |
 | `prompt_search` | every prompt ever typed, including where the session is gone |
 | `essence_search` | only decisions, constraints, tensions, anti-patterns (~5% of the corpus) |
@@ -219,8 +220,8 @@ On the corpus this was built against: 30,247 prompts back to September 2025, of
 which **15,174 have no surviving session** — everything before the vault existed
 is simply gone in every other form.
 
-A prompt counts as surviving if the index holds the exchange it opened, or any
-exchange from the same project within half an hour. Text alone is not enough: a
+A prompt counts as surviving if the index holds the turn it opened, or any
+turn from the same project within half an hour. Text alone is not enough: a
 slash command is stored in the transcript expanded, not as the seven characters
 you typed, so `/effort` would look lost while its whole session sat in the vault.
 
@@ -449,8 +450,9 @@ sessions.
 }
 ```
 
-`skill/SKILL.md` and `agent/search-conversations.md` are installable Claude Code
-surfaces for the same thing, if you prefer a skill over an MCP server.
+`skill/remembering-conversations/SKILL.md` and `agent/search-conversations.md`
+are installable Claude Code surfaces for the same thing, if you prefer a skill
+over an MCP server.
 
 `command/vault-maintenance.md` is the other end of that: what to do when the
 vault's `.git` grows out of proportion to the archive it holds — how to read
@@ -554,12 +556,18 @@ transcripts are irreplaceable.
 Three projects, and the first of them is the reason there is a second.
 
 **[episodic-memory](https://github.com/obra/episodic-memory)** — Jesse Vincent,
-MIT. This started as his, and a lot of it still is: the same four dependencies
-(MCP SDK, transformers.js, better-sqlite3, sqlite-vec), the same file layout —
-db, embeddings, indexer, parser, paths, search, show, mcp-server — and `search`
-and `read` matching his down to the parameter names and the values of their
-enums. Calling a tool like this an episodic memory is his phrasing, and this
-README used to open with it.
+MIT. This began from his. The module layout is the same — db, embeddings,
+indexer, parser, search, show, mcp-server — as is the approach to storage and
+retrieval: SQLite with sqlite-vec and FTS5, the two result sets merged by
+reciprocal rank. Calling a tool like this an episodic memory is his phrasing,
+and this README used to open with it.
+
+The code is a rewrite, and how much of his had survived it was measured rather
+than assumed — and then rewritten again, so that it no longer does. The schema,
+the field names and the enum values that once echoed his are gone. What still
+coincides is what cannot be rewritten: the same libraries imported, the same
+MCP scaffolding declared, the same transcript format parsed. Two programs
+solving one problem share that shape, and no rewrite removes it.
 
 It was good at everything I wanted except two things, and both were about what
 a session is made of. Its index keeps which tools ran and what they were given,
@@ -621,19 +629,21 @@ it runs against your own transcripts.
 npm test
 ```
 
-265 tests over parsing, the tokenizer, the CLI, the hook, machine manifests,
+321 tests over parsing, the tokenizer, the CLI, the hook, machine manifests,
 prompt history, the claude.ai importer, source adapters, restore's refusal to
 offer what it cannot restore, the model cache, path confinement, the
-configuration vault and the credential scanner that guards it, and the
-entity, KG and thread layers. No network, no database.
+configuration vault and the credential scanner that guards it, the entity, KG
+and thread layers, and the upgrade path from the previous index layout. No
+network; the only database is the temporary one the upgrade tests build and
+throw away.
 
 ## Scale
 
-For reference, a corpus of ~31,300 exchanges across 138 projects and ~3,700
+For reference, a corpus of ~31,300 turns across 138 projects and ~3,700
 transcript files produces a ~500 MB database, with ~60,800 essence extracts,
 ~9,100 entities, 844 knowledge-graph facts and ~122 threads on top of it, plus
 ~30,200 prompts. That corpus spans seven assistants; Claude Code is 28,091 of
-those exchanges and the other six make up the rest. Incremental indexing of a single new session is a second or
+those turns and the other six make up the rest. Incremental indexing of a single new session is a second or
 two; a full re-index of that corpus is a coffee break, dominated by embedding.
 
 ## Name

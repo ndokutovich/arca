@@ -3,10 +3,10 @@
  * Incremental indexer for arca.
  *
  * Scans ~/.claude-vault/ for transcripts — each project's top level and the
- * subagents inside every session directory — parses them into exchanges,
+ * subagents inside every session directory — parses them into turns,
  * generates embeddings, and stores in SQLite with vec + FTS5.
  *
- * Exchange-level delta: hashes each exchange by content,
+ * Turn-level delta: hashes each turn by content,
  * only embeds new ones. Handles growing session files correctly.
  *
  * Usage:
@@ -18,52 +18,52 @@
 import path from 'path';
 import os from 'os';
 import { parseTranscript } from './lib/parser.js';
-import { getDb, closeDb, getIndexedIds, upsertExchange, deleteByArchive, upsertEssence, listIndexedArchives } from './lib/db.js';
-import { embedExchange, initEmbeddings } from './lib/embeddings.js';
-import { extractExchangeEssence } from './lib/essence.js';
+import { getDb, closeDb, getIndexedIds, upsertTurn, deleteByArchive, upsertEssence, listIndexedArchives } from './lib/db.js';
+import { embedTurn, warmModel } from './lib/embeddings.js';
+import { extractTurnEssence } from './lib/essence.js';
 import { findArchivedTranscripts, projectOf } from './lib/transcripts.js';
 
 const VAULT_DIR = path.join(os.homedir(), '.claude-vault');
 
 async function indexFile(filePath, project, fullReindex = false) {
-  const exchanges = await parseTranscript(filePath, project);
+  const turns = await parseTranscript(filePath, project);
 
   // Clear before the empty check, not after it. A transcript that became empty
-  // or unparseable returned early and kept every exchange it used to have,
+  // or unparseable returned early and kept every turn it used to have,
   // which is exactly the case --full exists to correct.
   const existingIds = fullReindex ? new Set() : getIndexedIds(filePath);
   if (fullReindex) {
     deleteByArchive(filePath);
   }
 
-  if (exchanges.length === 0) return { indexed: 0, skipped: 0 };
+  if (turns.length === 0) return { indexed: 0, skipped: 0 };
 
   let indexed = 0;
   let skipped = 0;
 
-  // A sidechain's entries carry isSidechain themselves, but the filename is
+  // A sidechain's entries carry fromAgent themselves, but the filename is
   // the part that cannot be wrong: agent-*.jsonl is a subagent transcript
   // whatever its contents claim. Without this, a file missing the flag joins
   // the default results silently — the failure nobody notices.
   const sidechain = path.basename(filePath).startsWith('agent-');
 
-  for (const exchange of exchanges) {
-    if (existingIds.has(exchange.id)) {
+  for (const turn of turns) {
+    if (existingIds.has(turn.id)) {
       skipped++;
       continue;
     }
 
-    const toolNames = exchange.toolCalls?.map(t => t.toolName);
-    const embedding = await embedExchange(
-      exchange.userMessage,
-      exchange.assistantMessage,
-      toolNames
+    const toolsUsed = turn.toolCalls?.map(t => t.toolName);
+    const embedding = await embedTurn(
+      turn.promptText,
+      turn.replyText,
+      toolsUsed
     );
 
-    upsertExchange(sidechain ? { ...exchange, isSidechain: true } : exchange, embedding);
-    if (!exchange.isSystemNoise) {
-      const extracts = extractExchangeEssence(exchange);
-      upsertEssence(exchange.id, exchange.project, extracts);
+    upsertTurn(sidechain ? { ...turn, fromAgent: true } : turn, embedding);
+    if (!turn.isNoise) {
+      const extracts = extractTurnEssence(turn);
+      upsertEssence(turn.id, turn.project, extracts);
     }
     indexed++;
   }
@@ -81,7 +81,7 @@ async function main() {
   const log = quiet ? () => {} : (msg) => console.error(msg);
 
   log('Initializing embedding model...');
-  await initEmbeddings();
+  await warmModel();
 
   getDb();
 
@@ -111,11 +111,11 @@ async function main() {
       totalIndexed += indexed;
       totalSkipped += skipped;
       if (indexed > 0) {
-        log(`  [${i + 1}/${files.length}] ${project}: +${indexed} exchanges`);
+        log(`  [${i + 1}/${files.length}] ${project}: +${indexed} turns`);
       }
     }
 
-    // A file deleted from the archive was never visited again, so its exchanges
+    // A file deleted from the archive was never visited again, so its turns
     // stayed searchable forever — a full reindex that only ever adds is not a
     // reconciliation. Drop what the scan no longer sees.
     const onDisk = new Set(files.map((f) => f.path));

@@ -1,46 +1,46 @@
 #!/usr/bin/env node
 /**
  * Backfill — populate the new analytic columns + essence layer for
- * exchanges already in the DB, without touching embeddings.
+ * turns already in the DB, without touching embeddings.
  *
- * Idempotent: safe to re-run. Reads each exchange, computes
- * is_system_noise + prompt_kind + essence_extracts, writes them back.
+ * Idempotent: safe to re-run. Reads each turn, computes
+ * is_noise + prompt_class + essence_extracts, writes them back.
  */
 
-import { getDb, closeDb, upsertEssence } from './lib/db.js';
+import { getDb, closeDb, upsertEssence, transaction } from './lib/db.js';
 import { isSystemNoise } from './lib/noise.js';
 import { classifyPrompt } from './lib/control.js';
-import { extractExchangeEssence } from './lib/essence.js';
+import { extractTurnEssence } from './lib/essence.js';
 
 function main() {
   const db = getDb();
-  const total = db.prepare('SELECT COUNT(*) as c FROM exchanges').get().c;
-  console.error(`Backfilling ${total} exchanges...`);
+  const total = db.prepare('SELECT COUNT(*) as c FROM turns').get().c;
+  console.error(`Backfilling ${total} turns...`);
 
   const update = db.prepare(`
-    UPDATE exchanges
-    SET is_system_noise = ?, prompt_kind = ?
+    UPDATE turns
+    SET is_noise = ?, prompt_class = ?
     WHERE id = ?
   `);
 
   const rows = db.prepare(`
-    SELECT id, project, user_message, assistant_message
-    FROM exchanges
+    SELECT id, project, prompt_text, reply_text
+    FROM turns
   `).all();
 
-  const tx = db.transaction(() => {
+  const tx = transaction(() => {
     let processed = 0;
     let noiseCount = 0;
     let essenceCount = 0;
     const t0 = Date.now();
     for (const row of rows) {
-      const noise = isSystemNoise(row.user_message);
-      const kind = classifyPrompt(row.user_message);
+      const noise = isSystemNoise(row.prompt_text);
+      const kind = classifyPrompt(row.prompt_text);
       update.run(noise ? 1 : 0, kind, row.id);
       if (!noise) {
-        const extracts = extractExchangeEssence({
-          userMessage: row.user_message,
-          assistantMessage: row.assistant_message,
+        const extracts = extractTurnEssence({
+          promptText: row.prompt_text,
+          replyText: row.reply_text,
         });
         upsertEssence(row.id, row.project, extracts);
         essenceCount += extracts.length;
@@ -58,7 +58,7 @@ function main() {
 
   const result = tx();
   console.error('');
-  console.error(`Done: ${result.processed} exchanges`);
+  console.error(`Done: ${result.processed} turns`);
   console.error(`  system-noise: ${result.noiseCount}`);
   console.error(`  essence extracts: ${result.essenceCount}`);
   closeDb();

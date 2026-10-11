@@ -5,7 +5,7 @@
 // indexer plus the three derived-layer builders — under a comment claiming the
 // layers read what the indexer had written. They did not: all four started
 // together, so the knowledge graph could read the entity tables while they were
-// being cleared, and every builder could read exchanges the indexer had not
+// being cleared, and every builder could read turns the indexer had not
 // inserted yet. The order was documented and never enforced.
 //
 // The hook cannot wait for this itself, because SessionStart must return
@@ -35,10 +35,10 @@ if (!packageRoot) {
 
 // --all instead of a file list: the hook copied more than one command line can
 // carry (Windows stops at 32,767 characters), so index the whole vault
-// incrementally — it skips every exchange it already has.
+// incrementally — it skips every turn it already has.
 const all = files[0] === '--all';
 
-// Exchanges first; each derived layer reads what the step before it wrote.
+// Turns first; each derived layer reads what the step before it wrote.
 const STAGES = [
   all ? ['indexer.js', ['--quiet']] : ['index-incremental.js', files],
   ['build-entities.js', ['--quiet']],

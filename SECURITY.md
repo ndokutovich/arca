@@ -3,9 +3,14 @@
 ## What arca holds
 
 arca copies your Claude Code sessions into `~/.claude-vault` and keeps them
-in git. The vault therefore contains every conversation you have had with an
-assistant on that machine, in full, for as long as you keep it — which is the
-point of the tool and also the thing to understand about it.
+in git. The vault therefore holds everything arca has seen, in full, for as
+long as you keep it — which is the point of the tool and also the thing to
+understand about it.
+
+It cannot reach back past its own installation. A session deleted before arca
+was installed is gone, and the other assistants are read only once they are
+named in `arca sources`. What is in the vault is complete from that point on,
+not from the beginning.
 
 It holds four stores:
 

@@ -2,7 +2,7 @@
 /**
  * Temporal knowledge-graph derivation pass.
  *
- * Reads indexed exchanges in CHRONOLOGICAL order and feeds extracted facts to
+ * Reads indexed turns in CHRONOLOGICAL order and feeds extracted facts to
  * addTriple(), so single-valued predicates (runs_on_port, has_version)
  * supersede correctly and build valid-time windows. Auto-extracted triples are
  * cleared and rebuilt each run; manually-added facts (method='manual') are kept.
@@ -32,17 +32,17 @@ function main() {
   log(`${known.size} known entity subjects.`);
 
   const rows = db.prepare(`
-    SELECT id, project, timestamp, user_message, assistant_message
-    FROM exchanges
-    WHERE is_system_noise = 0
+    SELECT id, project, timestamp, prompt_text, reply_text
+    FROM turns
+    WHERE is_noise = 0
     ORDER BY COALESCE(timestamp, '') ASC, id ASC
   `).all();
-  log(`Scanning ${rows.length} exchanges chronologically...`);
+  log(`Scanning ${rows.length} turns chronologically...`);
 
   // Extract first, into memory; nothing in the database has changed yet.
   for (const r of rows) {
     const day = (r.timestamp || '').slice(0, 10) || null;
-    for (const msg of [r.user_message, r.assistant_message]) {
+    for (const msg of [r.prompt_text, r.reply_text]) {
       if (!msg) continue;
       for (const f of extractFacts(msg, { known })) {
         pendingFacts.push({

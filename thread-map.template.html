@@ -100,7 +100,7 @@ function selectThread(id) {
   const segs = segsOf(id);
   panel.innerHTML =
     `<h2>${esc(t.label)}</h2>
-     <div class="meta">${t.ex} exchanges · ${t.sess} sessions · ${t.proj} projects · ⤺${t.ret} returns<br>
+     <div class="meta">${t.ex} turns · ${t.sess} sessions · ${t.proj} projects · ⤺${t.ret} returns<br>
       ${(t.first||'').slice(0,10)} → ${(t.last||'').slice(0,10)}</div>
      <div class="chips">${(t.projects||[]).map(p=>`<span class="chip" style="border-color:${esc(PC[p]||'#333')}">${esc(shortP(p))}</span>`).join('')}</div>
      <div style="color:var(--dim);font-size:11px;margin-bottom:6px">CHRONOLOGY — ${segs.length} segments</div>` +
@@ -189,7 +189,7 @@ cv.addEventListener('click',e=>{ const r=cv.getBoundingClientRect(); const n=nod
 
 // ================= VIEW 2: RIVER (stacked area / themeriver, SVG) =================
 function tsToDay(ts){ return Date.parse((ts||'').slice(0,10)+'T00:00:00Z'); }
-// Domain by exchange-weighted percentiles, so a few old outlier segments
+// Domain by turn-weighted percentiles, so a few old outlier segments
 // don't stretch the axis and crush the real mass into a spike.
 const dayEx = SEG.map(s=>[tsToDay(s.ts), s.ex]).filter(d=>!isNaN(d[0])).sort((a,b)=>a[0]-b[0]);
 const totalEx = dayEx.reduce((s,d)=>s+d[1],0) || 1;
@@ -200,7 +200,7 @@ const NW = Math.max(1, Math.ceil((DMAX-DMIN)/WEEK)+1);
 function renderRiver(){
   const svg=document.getElementById('river'); const w=svg.clientWidth, h=svg.clientHeight;
   svg.setAttribute('viewBox',`0 0 ${w} ${h}`); svg.innerHTML='';
-  // top threads by exchanges
+  // top threads by turns
   const top = [...T].sort((a,b)=>b.ex-a.ex).slice(0,14);
   const bins = new Map(top.map(t=>[t.id, new Float64Array(NW)]));
   for (const s of SEG){ const arr=bins.get(s.t); if(!arr) continue; const wi=Math.floor((tsToDay(s.ts)-DMIN)/WEEK); if(wi>=0&&wi<NW) arr[wi]+=s.ex; }

@@ -66,8 +66,8 @@ process.env.USERPROFILE = sandbox;
 process.env.ARCA_MODEL_DIR = process.env.ARCA_MODEL_DIR
   || path.join(realHome, '.claude-vault', '.cache', 'models', 'all-MiniLM-L6-v2');
 
-const { getDb, upsertExchange, deleteByArchive, closeDb } = await import('../lib/db.js');
-const { embedExchange, initEmbeddings } = await import('../lib/embeddings.js');
+const { getDb, upsertTurn, deleteByArchive, closeDb } = await import('../lib/db.js');
+const { embedTurn, warmModel } = await import('../lib/embeddings.js');
 const { runModes, summarise, table } = await import('../lib/bench.js');
 
 const cleanup = () => {
@@ -118,7 +118,7 @@ console.log(`${items.length} questions, ${sessions} sessions, ${turns} turns to 
 console.log(`isolated vault: ${sandbox}`);
 console.log('');
 
-await initEmbeddings();
+await warmModel();
 getDb();
 
 const id = (...parts) => crypto.createHash('sha1').update(parts.join('␟')).digest('hex').slice(0, 32);
@@ -134,14 +134,14 @@ function stamp(text) {
 }
 
 /**
- * Turn one question's haystack into exchanges in the index.
+ * Turn one question's haystack into turns in the index.
  *
  * A session is a flat list of turns; arca's unit is a user turn with the
  * assistant turn that answered it, which is how the real corpus is shaped and
  * therefore what the search was tuned against. A trailing user turn with no
  * answer is still indexed, with an empty assistant side.
  */
-async function indexHaystack(q, archivePath) {
+async function indexHaystack(q, transcriptPath) {
   let n = 0;
   for (let s = 0; s < q.haystack_sessions.length; s++) {
     const sessionId = q.haystack_session_ids[s];
@@ -155,28 +155,28 @@ async function indexHaystack(q, archivePath) {
       const assistant = next && next.role === 'assistant' ? (next.content || '') : '';
       if (!user.trim() && !assistant.trim()) continue;
 
-      const exchange = {
+      const turn = {
         id: id(q.question_id, sessionId, String(t)),
         project: 'longmemeval',
         timestamp: stamp(date),
-        userMessage: user,
-        assistantMessage: assistant,
-        archivePath,
-        lineStart: t,
-        lineEnd: t + 1,
+        promptText: user,
+        replyText: assistant,
+        transcriptPath,
+        firstLine: t,
+        lastLine: t + 1,
         // The gold is keyed on the session, so this is what a hit is checked
         // against.
         sessionId,
         cwd: null,
-        gitBranch: null,
-        isSidechain: false,
+        branch: null,
+        fromAgent: false,
         toolCalls: null,
-        isSystemNoise: false,
-        promptKind: null,
+        isNoise: false,
+        promptClass: null,
         source: 'longmemeval',
-        contentHash: null,
+        bodyHash: null,
       };
-      upsertExchange(exchange, await embedExchange(user, assistant, ''));
+      upsertTurn(turn, await embedTurn(user, assistant, ''));
       n++;
     }
   }
@@ -220,7 +220,7 @@ const teardown = async (q) => {
   // in the log before it is killed rather than after.
   seen++;
   if (seen % 25 === 0 && !process.stdout.isTTY) {
-    console.log(`  ${seen} questions, ${embedded} exchanges, ${Math.round((Date.now() - t0) / 1000)}s, rss ${rss.toFixed(0)} MB`);
+    console.log(`  ${seen} questions, ${embedded} turns, ${Math.round((Date.now() - t0) / 1000)}s, rss ${rss.toFixed(0)} MB`);
   }
 };
 
@@ -250,7 +250,7 @@ void fresh;
 const records = items.map((q) => done.get(q.question_id)).filter(Boolean);
 const reports = summarise(records, { k: K });
 
-console.log(`indexed ${embedded} exchanges in ${Math.round((Date.now() - t0) / 1000)}s, peak rss ${peakRss.toFixed(0)} MB`);
+console.log(`indexed ${embedded} turns in ${Math.round((Date.now() - t0) / 1000)}s, peak rss ${peakRss.toFixed(0)} MB`);
 console.log('');
 console.log(`LongMemEval_S · ${records.length} of ${items.length} questions · top ${K}`);
 console.log('');

@@ -23,14 +23,14 @@ function main() {
   const db = getDb();
   const threadsRaw = db.prepare('SELECT * FROM threads ORDER BY id').all();
   if (!threadsRaw.length) { console.error('No threads — run build-threads.js first.'); process.exit(1); }
-  const segsRaw = db.prepare('SELECT thread_id, project, ts_start, n_exchanges, summary FROM thread_segments').all();
+  const segsRaw = db.prepare('SELECT thread_id, project, ts_start, n_turns, summary FROM thread_segments').all();
 
-  // dominant project per thread (by exchange mass)
+  // dominant project per thread (by turn mass)
   const domAcc = new Map();
   for (const s of segsRaw) {
     if (s.thread_id == null) continue;
     let m = domAcc.get(s.thread_id); if (!m) { m = new Map(); domAcc.set(s.thread_id, m); }
-    m.set(s.project, (m.get(s.project) || 0) + s.n_exchanges);
+    m.set(s.project, (m.get(s.project) || 0) + s.n_turns);
   }
   const domProject = (id) => {
     const m = domAcc.get(id); if (!m) return null;
@@ -47,7 +47,7 @@ function main() {
 
   const threads = threadsRaw.map((t) => ({
     id: t.id, label: t.label,
-    ex: t.n_exchanges, sess: t.n_sessions, proj: t.n_projects, ret: t.return_count,
+    ex: t.n_turns, sess: t.n_sessions, proj: t.n_projects, ret: t.return_count,
     first: t.first_ts, last: t.last_ts,
     entities: JSON.parse(t.entities || '[]'),
     projects: JSON.parse(t.projects || '[]'),
@@ -80,7 +80,7 @@ function main() {
 
   const segments = segsRaw
     .filter((s) => s.thread_id != null)
-    .map((s) => ({ t: s.thread_id, p: s.project, ts: s.ts_start, ex: s.n_exchanges, s: (s.summary || '').slice(0, 110) }));
+    .map((s) => ({ t: s.thread_id, p: s.project, ts: s.ts_start, ex: s.n_turns, s: (s.summary || '').slice(0, 110) }));
 
   const data = { threads, edges, segments, projectColors };
   const tpl = fs.readFileSync(path.join(__dirname, 'thread-map.template.html'), 'utf8');

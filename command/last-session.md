@@ -25,7 +25,7 @@ ls -t ~/.claude/projects/*/*.jsonl | head -5
 
 ## Step 2: read the tail — "where we stopped" lives there
 
-The last few exchanges matter more than everything before them. From the tail,
+The last few turns matter more than everything before them. From the tail,
 pull out:
 
 - the final user request and what it was answered with;

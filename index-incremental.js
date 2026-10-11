@@ -10,9 +10,9 @@
 import fs from 'fs';
 import path from 'path';
 import { parseTranscript } from './lib/parser.js';
-import { extractExchangeEssence } from './lib/essence.js';
-import { getDb, closeDb, getIndexedIds, upsertExchange, upsertEssence } from './lib/db.js';
-import { embedExchange, initEmbeddings } from './lib/embeddings.js';
+import { extractTurnEssence } from './lib/essence.js';
+import { getDb, closeDb, getIndexedIds, upsertTurn, upsertEssence } from './lib/db.js';
+import { embedTurn, warmModel } from './lib/embeddings.js';
 import { projectOf, isSidechainFile } from './lib/transcripts.js';
 
 const args = process.argv.slice(2);
@@ -30,7 +30,7 @@ if (files.length === 0) {
 }
 
 try {
-  await initEmbeddings();
+  await warmModel();
   getDb();
 
   let totalIndexed = 0;
@@ -43,25 +43,25 @@ try {
     // As in the full indexer: agent-*.jsonl is a sidechain whatever its
     // entries claim, and one missing the flag would join default results.
     const sidechain = isSidechainFile(path.basename(filePath));
-    const exchanges = await parseTranscript(filePath, project);
+    const turns = await parseTranscript(filePath, project);
     const existingIds = getIndexedIds(filePath);
 
-    for (const exchange of exchanges) {
-      if (existingIds.has(exchange.id)) continue;
-      const toolNames = exchange.toolCalls?.map(t => t.toolName);
-      const embedding = await embedExchange(exchange.userMessage, exchange.assistantMessage, toolNames);
-      upsertExchange(sidechain ? { ...exchange, isSidechain: true } : exchange, embedding);
+    for (const turn of turns) {
+      if (existingIds.has(turn.id)) continue;
+      const toolsUsed = turn.toolCalls?.map(t => t.toolName);
+      const embedding = await embedTurn(turn.promptText, turn.replyText, toolsUsed);
+      upsertTurn(sidechain ? { ...turn, fromAgent: true } : turn, embedding);
       // The full indexer writes the essence layer here too. Leaving it out
-      // meant every exchange the hook indexed had no decisions, constraints or
+      // meant every turn the hook indexed had no decisions, constraints or
       // tensions extracted — the layer was silently only as current as the
       // last full re-index.
-      upsertEssence(exchange.id, exchange.project, extractExchangeEssence(exchange));
+      upsertEssence(turn.id, turn.project, extractTurnEssence(turn));
       totalIndexed++;
     }
   }
 
   if (totalIndexed > 0) {
-    console.error(`arca: indexed ${totalIndexed} new exchanges from ${files.length} files`);
+    console.error(`arca: indexed ${totalIndexed} new turns from ${files.length} files`);
   }
 } catch (err) {
   // The hook's pipeline decides whether to rebuild the derived layers from
