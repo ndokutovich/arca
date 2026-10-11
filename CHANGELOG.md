@@ -6,6 +6,37 @@ The version numbers are small and the releases are close together because
 this was written quickly and corrected often; several of them exist only
 because a review found something that had already shipped.
 
+## 0.12.3 — 2026-10-11
+
+### Changed
+
+- **The index schema is renamed throughout.** The table is `turns`, not
+  `exchanges`; the columns are `prompt_text`, `reply_text`, `transcript_path`,
+  `first_line`, `last_line`, `branch`, `from_agent`, `tools_used`, `is_noise`,
+  `prompt_class`, `body_hash` and `indexed_ms`; the derived layers key on
+  `turn_id`; and `--mode` takes `semantic`, `keyword` or `hybrid` in place of
+  `vector`, `text` and `both`.
+- **Upgrading rebuilds the index, and the derived layers with it.** The index is
+  derived and disposable, so a database from the previous layout has its turn,
+  essence, entity and thread tables dropped when it is first opened: leaving
+  them would have kept the old column names, and every write to them would then
+  have failed. `arca index` refills the turns and their essence extracts;
+  `build-entities.js`, `build-kg.js` and `build-threads.js` refill the rest.
+  Nothing is searchable until the first of those finishes, and it embeds the
+  whole corpus: minutes, not seconds.
+
+### Added
+
+- `lib/parser.test.js` and `lib/migration.test.js`. `parseTranscript` had no test
+  of its own, which is how a rename inside it survived a fully green suite; and
+  the upgrade path had none either, which is how the layout change shipped
+  broken against any database that already existed.
+
+### Fixed
+
+- The published tarball includes `CHANGELOG.md` and `SECURITY.md`.
+- The high and critical advisories reported against the lockfile are cleared.
+
 ## 0.12.2 — 2026-10-03
 
 ### Added
