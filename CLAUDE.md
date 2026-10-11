@@ -9,7 +9,7 @@ A vault for Claude Code session transcripts: archived into git, indexed into
 SQLite, served back over MCP. `README.md` is the reference — it is kept current
 and is the right place to look before asking the code.
 
-No build step. `node --test` runs everything (265 tests across 26 files), needs
+No build step. `node --test` runs everything (321 tests across 33 files), needs
 no network, and must stay that way.
 
 ## Releasing
@@ -23,11 +23,18 @@ git push origin main && git push origin v0.0.0
 ```
 
 `.github/workflows/release.yml` validates the tag against `package.json`, runs
-the suite on Linux, macOS and Windows, then publishes with a token held in
-repository secrets. The token is deliberately not on any developer machine, so
+the suite on Linux, macOS and Windows, then publishes over OIDC: npm trusts a
+short-lived identity scoped to this repository and workflow filename. There is
+no token anywhere — not in repository secrets, not on a developer machine — so
 a local `npm publish` failing with `ENEEDAUTH` is the system working. Check
 `gh run list --workflow=release.yml` and `npm view @ndokutovich/arca version`,
 not the local shell.
+
+Recreating the GitHub repository silently invalidates that trust. The npm page
+still shows the same owner and repository and still says Valid, and every
+publish answers `404` on PUT — which reads as "package not found" and is not.
+Delete the trusted-publisher entry on npmjs.com and add it again; the new one
+starts as Pending validation until one publish succeeds through it.
 
 ## Dependencies are load-bearing by their absence
 

@@ -1,13 +1,12 @@
 # Arca
 
-*A vault for everything Claude Code throws away.*
+*Keep the raw transcript. Index it whenever you think of a better question.*
 
-It archives your session transcripts, indexes them, and serves them back through
-MCP — so a new session can recall what earlier ones decided, and why.
-
-Claude Code writes every session to `~/.claude/projects/` as JSONL and never reads it
-again. Compaction throws away the conversation the current session can no longer hold.
-Cleanup throws away the file. This keeps both, in git, and makes them searchable.
+A vault for coding-agent session history. Claude Code writes every session to
+`~/.claude/projects/` as JSONL and never reads it again; compaction throws away
+the conversation the current session can no longer hold, and cleanup throws away
+the file. This keeps both, in git, and makes them searchable — served back over
+MCP, so a new session can recall what earlier ones decided, and why.
 
 Everything runs locally. Embeddings are computed on your machine and no
 conversation leaves it — the one outbound request arca makes is the first-run
