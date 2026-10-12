@@ -946,7 +946,8 @@ function pad(rows) {
 
 function overview() {
   return [
-    'arca — a vault for everything Claude Code throws away.',
+    'arca — keep the raw transcript. Index it whenever you think of a better',
+    'question.',
     '',
     'Usage: arca <command> [options]',
     '',
