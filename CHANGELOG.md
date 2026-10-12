@@ -6,6 +6,15 @@ The version numbers are small and the releases are close together because
 this was written quickly and corrected often; several of them exist only
 because a review found something that had already shipped.
 
+## 0.12.4 — 2026-10-12
+
+### Changed
+
+- **The README and the npm description now lead with what arca is, not with what
+  Claude Code loses.** Opening on the loss made the reason the tool exists
+  something upstream could fix; the position is the vault and the layers hung on
+  it. Prose only — no code changed in this release.
+
 ## 0.12.3 — 2026-10-11
 
 ### Changed
