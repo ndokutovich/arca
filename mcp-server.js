@@ -27,6 +27,7 @@ import {
   formatMultiConceptMarkdown,
 } from './lib/search.js';
 import { showConversation } from './lib/show.js';
+import { listSessions } from './lib/sessions.js';
 import { getDb, getStats, closeDb, addTriple, invalidateTriple, queryTriples, kgTimeline,
   addObservation, searchObservations, observationIndex, getObservation, OBSERVATION_TYPES,
   listThreads, searchThreads, getThread,
@@ -121,6 +122,32 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
       },
       annotations: {
         title: 'Read Conversation',
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    },
+    {
+      name: 'sessions',
+      description:
+        'List Claude Code sessions, newest first: id, project, title, last prompt, time and size. ' +
+        'Use it to find a session by name and then pass the returned `file` straight to `read`. ' +
+        'Unlike `search`, it needs no query and returns sessions rather than turns.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          project: { type: 'string', description: 'Only sessions whose project directory contains this text' },
+          query: { type: 'string', description: 'Only sessions whose title, last prompt, cwd or id contains this text' },
+          limit: { type: 'number', minimum: 1, description: 'How many rows to return; 50 by default' },
+          since: { type: 'string', description: 'ISO date; only sessions modified on or after it' },
+          archived: { type: 'boolean', description: 'Also list sessions only the vault has, restorable with `arca restore`' },
+          agents: { type: 'boolean', description: 'Also list subagent sidechains, which are excluded by default' },
+        },
+        additionalProperties: false,
+      },
+      annotations: {
+        title: 'List sessions',
         readOnlyHint: true,
         destructiveHint: false,
         idempotentHint: true,
@@ -476,6 +503,19 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
       const markdown = showConversation(resolved, startLine, endLine);
       return { content: [{ type: 'text', text: markdown }] };
+    }
+
+    if (name === 'sessions') {
+      const { project = '', query = '', limit = 50, since, archived = false, agents = false } = args;
+      const rows = await listSessions({ project, query, limit, since, archived, agents });
+      if (!rows.length) return { content: [{ type: 'text', text: 'No sessions.' }] };
+      const lines = rows.map((r) => {
+        const when = r.mtime.slice(0, 16).replace('T', ' ');
+        const mb = `${(r.sizeBytes / 1048576).toFixed(1)} MB`;
+        const mark = r.source === 'archived' ? ' [archived]' : (r.alsoArchived ? ' [vault copy]' : '');
+        return `${r.id.slice(0, 8)}  ${when}  ${mb}  ${r.slug}  ${r.title}${mark}\n  ${r.file}`;
+      });
+      return { content: [{ type: 'text', text: `${rows.length} session(s):\n\n${lines.join('\n')}` }] };
     }
 
     if (name === 'stats') {

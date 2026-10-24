@@ -76,6 +76,7 @@ arca help <command>       # and what one of them does
 arca search "query"       # hybrid search; two or more queries is an AND
 arca prompts "query"      # search what you typed, session or no session
 arca read <path>          # print a conversation as markdown
+arca sessions             # list sessions: title, project, when; --archived adds vault-only
 arca stats                # what the vault and the index hold
 
 arca index                # fold new turns in (incremental, safe to re-run)
@@ -98,13 +99,14 @@ hook runs them in order for you through `hooks/pipeline.js`.
 
 ## The MCP tools
 
-Nineteen, all read-only unless noted.
+Twenty, all read-only unless noted.
 
 **Finding things**
 
 | Tool | For |
 |---|---|
 | `search` | hybrid vector + FTS5 over every turn; 2-5 concepts for an AND |
+| `sessions` | the list itself: title, project, when, size — then `read` its `file` |
 | `read` | one conversation in full, with line-range pagination |
 | `prompt_search` | every prompt ever typed, including where the session is gone |
 | `essence_search` | only decisions, constraints, tensions, anti-patterns (~5% of the corpus) |

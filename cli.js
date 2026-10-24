@@ -20,6 +20,7 @@ const lazy = {
   show: () => import('./lib/show.js'),
   db: () => import('./lib/db.js'),
   restore: () => import('./lib/restore.js'),
+  sessions: () => import('./lib/sessions.js'),
   install: () => import('./lib/install.js'),
   resurrect: () => import('./lib/resurrect.js'),
   importer: () => import('./import-claude-ai.js'),
@@ -189,6 +190,64 @@ const COMMANDS = {
         start ? Number(start) : undefined,
         end ? Number(end) : undefined,
       ));
+    },
+  },
+
+  sessions: {
+    summary: 'list sessions, newest first',
+    usage: 'arca sessions [options]',
+    detail: [
+      'One row per session: id, when it was last touched, its project and what it',
+      'is about. `arca read` takes the path, so a session found here opens there.',
+      '',
+      'A title comes from a manual rename, then the generated title, then the',
+      'compaction summary, then the first prompt someone actually typed. Only the',
+      'ends of each transcript are read — they reach hundreds of megabytes.',
+      '',
+      '--archived also lists sessions only the vault still has, the ones',
+      '`arca restore` puts back. A session present in both is listed once, as',
+      'live, marked as having a copy in the vault.',
+    ],
+    flags: {
+      project: F.project,
+      query: { value: 'TEXT', describe: 'only sessions whose title, last prompt, cwd or id contains it' },
+      limit: F.limit,
+      since: { value: 'DATE', describe: 'only sessions modified on or after this date' },
+      archived: { boolean: true, describe: 'also list sessions only the vault has' },
+      agents: { boolean: true, describe: 'also list subagent sidechains' },
+      json: { boolean: true, describe: 'machine-readable output' },
+    },
+    examples: [
+      'arca sessions',
+      'arca sessions --project presale --limit 10',
+      'arca sessions --query jira --since 2026-01-01',
+    ],
+    async run({ flags }) {
+      const { listSessions } = await lazy.sessions();
+      const rows = await listSessions({
+        project: flags.project || '',
+        query: flags.query || '',
+        since: flags.since || undefined,
+        limit: num(flags.limit, 'limit') ?? 20,
+        archived: !!flags.archived,
+        agents: !!flags.agents,
+      });
+      if (flags.json) {
+        console.log(JSON.stringify(rows, null, 2));
+        return;
+      }
+      if (!rows.length) {
+        console.log('No sessions.');
+        return;
+      }
+      for (const r of rows) {
+        const when = r.mtime.slice(0, 16).replace('T', ' ');
+        const mark = r.source === 'archived' ? ' archived' : (r.alsoArchived ? '  +vault' : '');
+        console.log(`  ${r.id.slice(0, 8)}  ${when}  ${human(r.sizeBytes).padStart(9)}  `
+          + `${r.slug.slice(0, 28).padEnd(28)}  ${r.title.slice(0, 60)}${mark}`);
+      }
+      console.log('');
+      console.log('Open one with:  arca sessions --json  →  arca read <file>');
     },
   },
 

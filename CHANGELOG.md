@@ -6,6 +6,41 @@ The version numbers are small and the releases are close together because
 this was written quickly and corrected often; several of them exist only
 because a review found something that had already shipped.
 
+## 0.13.0 — 2026-10-25
+
+### Added
+
+- **`arca sessions`, and a `sessions` MCP tool behind the same code.** `search`
+  needs a query and answers in turns, so there was no way to ask what sessions
+  exist. This lists them newest first — title, project, when, size — and every
+  row carries the transcript's absolute path, so `read` takes it as it is.
+  A title comes from a manual rename, then the generated title, then the
+  compaction summary, then the first prompt someone actually typed; only the
+  first and last 32 KB of a transcript are read, because they reach hundreds of
+  megabytes. Metadata is cached under `~/.claude-vault/.arca/`, keyed by size
+  and mtime and written through a 0600 temp file and a rename. Without a query
+  and with a limit, only the newest rows are read: stat is cheap, a read per
+  file is not.
+- `--archived` lists sessions only the vault still has, the ones `arca restore`
+  puts back. A session present in both is listed once, as live, marked as having
+  a copy in the vault. `--agents` adds subagent sidechains, off by default.
+
+### Changed
+
+- `walkTranscripts()` takes `{ agents }`. The sidechains `isTranscript` filters
+  out are admitted when a caller asks for them.
+
+### Fixed
+
+- **A transcript shorter than one read chunk never reported its last prompt.**
+  The tail is empty at that size and scanning an empty tail finds nothing, so
+  `lastPrompt` was blank and the title fell back to the first prompt for every
+  short session. The head is now scanned as the tail when there is no tail: on a
+  corpus of 1 585 short sessions this moved coverage from 17 to 1 584.
+- **A long session ending in tool results had no last prompt either.** The last
+  user line can sit further back than one chunk, so when the cheap read finds
+  nothing a wider window is read — the last 256 KB, searched from the end.
+
 ## 0.12.4 — 2026-10-12
 
 ### Changed

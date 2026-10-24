@@ -9,7 +9,7 @@ A vault for Claude Code session transcripts: archived into git, indexed into
 SQLite, served back over MCP. `README.md` is the reference — it is kept current
 and is the right place to look before asking the code.
 
-No build step. `node --test` runs everything (321 tests across 33 files), needs
+No build step. `node --test` runs everything (340 tests across 34 files), needs
 no network, and must stay that way.
 
 ## Releasing
