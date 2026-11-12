@@ -6,6 +6,17 @@ The version numbers are small and the releases are close together because
 this was written quickly and corrected often; several of them exist only
 because a review found something that had already shipped.
 
+## 0.14.1 — 2026-11-12
+
+### Fixed
+
+- 0.14.0 skipped the summarizer's instruction only when it arrived as a
+  compaction entry's `summary` field. On the sessions that were actually
+  broken it arrives as a **user turn** — the instruction recorded verbatim —
+  and with no generated title present it became the first prompt, and so the
+  title. It is filtered there too, and the parser version is bumped again so
+  the cached rows are re-read.
+
 ## 0.14.0 — 2026-11-12
 
 ### Added
