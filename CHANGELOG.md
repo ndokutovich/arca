@@ -6,6 +6,37 @@ The version numbers are small and the releases are close together because
 this was written quickly and corrected often; several of them exist only
 because a review found something that had already shipped.
 
+## 0.14.0 — 2026-11-12
+
+### Added
+
+- **`arca digest`.** A period of work grouped by project: what was typed in the
+  window, which sessions were open, and the counts. This is the deterministic
+  half of a retrospective — it counts and lists, and leaves the judgement to a
+  person or a model reading `--json`. Nothing is filtered away: automated review
+  runs and slash commands are counted and marked, and `--all` lists them among
+  the prompts, because a report that silently drops them reads as if that time
+  never happened. The window takes `7d`, `24h`, `2w` or a date. Before reading,
+  the digest pulls whatever the machine typed since the last import, so it
+  cannot quietly report a smaller week than actually happened. Sessions are
+  opt-in (`--sessions`): collecting them walks every transcript.
+
+### Fixed
+
+- Session titles no longer come from a compaction entry's `summary` field when
+  that field holds the summarizer's own instruction. Half the index was named
+  "Context: This summary will be shown in a list to help users…". The metadata
+  cache key now carries a parser version, so wrong titles are re-derived once
+  instead of surviving until each transcript changes.
+
+### Changed
+
+- The vault hook stops committing a transcript once it passes 200 MB. Git
+  re-hashes the whole blob on every change, and on a full disk behind a virus
+  scanner that is minutes per attempt — long past the hook's timeout. The file
+  stays in the vault; only git stops tracking it. The hook also takes a lock, so
+  six sessions starting together do not all copy and commit at once.
+
 ## 0.13.0 — 2026-10-25
 
 ### Added
