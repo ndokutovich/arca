@@ -21,6 +21,7 @@ const lazy = {
   db: () => import('./lib/db.js'),
   restore: () => import('./lib/restore.js'),
   sessions: () => import('./lib/sessions.js'),
+  digest: () => import('./lib/digest.js'),
   install: () => import('./lib/install.js'),
   resurrect: () => import('./lib/resurrect.js'),
   importer: () => import('./import-claude-ai.js'),
@@ -110,6 +111,20 @@ function num(value, name) {
   const n = Number(value);
   if (!Number.isInteger(n) || n < 0) fail(`--${name} wants a whole number, got "${value}"`);
   return n;
+}
+
+// 7d, 24h, 2w, or a date. Relative is what gets typed; a date is what gets
+// copied out of a report.
+function sinceMs(value) {
+  const s = String(value || '').trim();
+  const rel = s.match(/^(\d+)\s*([hdw])$/i);
+  if (rel) {
+    const unit = { h: 3600e3, d: 86400e3, w: 7 * 86400e3 }[rel[2].toLowerCase()];
+    return Date.now() - Number(rel[1]) * unit;
+  }
+  const t = Date.parse(s);
+  if (!Number.isNaN(t)) return t;
+  return fail(`--since wants 7d, 24h, 2w or a date, got "${s}"`);
 }
 
 // Shared flag shapes, so the same option reads the same way everywhere.
@@ -248,6 +263,66 @@ const COMMANDS = {
       }
       console.log('');
       console.log('Open one with:  arca sessions --json  →  arca read <file>');
+    },
+  },
+
+  digest: {
+    summary: 'a period of work grouped by project — prompts, sessions, counts',
+    usage: 'arca digest [--since 7d] [options]',
+    detail: [
+      'What was typed and which sessions were open, grouped by project and',
+      'ordered by volume. This is the deterministic half of a retrospective:',
+      'it counts and lists, it does not decide what mattered.',
+      '',
+      'Nothing is filtered away. Automated review runs and slash commands are',
+      'counted and marked, and --all lists them among the prompts. A report',
+      'that silently dropped them would read as if that time never existed.',
+      '',
+      'Sessions are not included unless --sessions is given: collecting them',
+      'walks every transcript, which is the slow part.',
+    ],
+    flags: {
+      since: { value: '7d|YYYY-MM-DD', describe: 'window start, default 7d' },
+      project: F.project,
+      sessions: { boolean: true, describe: 'include sessions (walks transcripts; slower)' },
+      all: { boolean: true, describe: 'list automated and command prompts too, not only count them' },
+      json: { boolean: true, describe: 'machine-readable output' },
+    },
+    examples: [
+      'arca digest',
+      'arca digest --since 2026-11-05 --sessions',
+      'arca digest --since 2w --project artezio --json',
+    ],
+    async run({ flags }) {
+      const from = sinceMs(flags.since || '7d');
+      // The archive is append-only and fed by `arca prompts --import`. Pull
+      // what the machine typed since the last import first, otherwise the
+      // digest quietly reports a smaller week than actually happened.
+      try {
+        const H = await import('./lib/history.js');
+        H.syncToVault();
+      } catch { /* a missing history file is not a reason to fail the digest */ }
+      const D = await lazy.digest();
+      let sessions = null;
+      if (flags.sessions) {
+        const S = await lazy.sessions();
+        sessions = await S.listSessions({
+          since: new Date(from).toISOString(),
+          limit: 2000,
+          archived: true,
+        });
+      }
+      const d = D.buildDigest({
+        sinceMs: from,
+        project: flags.project || '',
+        sessions,
+        includeNoise: !!flags.all,
+      });
+      if (flags.json) {
+        console.log(JSON.stringify(d, null, 2));
+        return;
+      }
+      console.log(D.formatDigestMarkdown(d));
     },
   },
 

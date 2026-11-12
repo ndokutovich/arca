@@ -119,6 +119,48 @@ function note(msg) {
   } catch (_) {}
 }
 
+// A transcript that grows past a quarter gigabyte cannot be committed. Git
+// re-hashes the whole blob on every change; on a full disk behind a virus
+// scanner that is minutes per attempt, and the commit step is killed long
+// before it finishes — forty days of that is what filled the vault with
+// half-gigabyte temporary objects nobody could reclaim.
+//
+// The vault keeps such a file on disk; git stops tracking it. Left in the
+// index, every later run would repeat the same doomed hash.
+const COMMIT_MAX_BYTES = 200 * 1024 * 1024;
+
+function dropOversizedFromIndex(dirty) {
+  const paths = dirty.split(String.fromCharCode(10))
+    .map((line) => line.slice(3).replace(/^"|"$/g, ''))
+    .filter(Boolean);
+  if (!paths.length) return;
+
+  const exclude = path.join(VAULT_DIR, '.git', 'info', 'exclude');
+  let current = '';
+  try { current = fs.readFileSync(exclude, 'utf8'); } catch { /* absent */ }
+  const known = new Set(current.split(String.fromCharCode(10)).map((l) => l.trim()));
+
+  const drop = [];
+  for (const p of paths) {
+    if (known.has(p)) continue;
+    let size;
+    try { size = fs.statSync(path.join(VAULT_DIR, p)).size; } catch { continue; }
+    if (size <= COMMIT_MAX_BYTES) continue;
+    drop.push(p);
+    known.add(p);
+  }
+  if (!drop.length) return;
+
+  try {
+    fs.mkdirSync(path.dirname(exclude), { recursive: true });
+    fs.appendFileSync(exclude, drop.join(String.fromCharCode(10)) + String.fromCharCode(10));
+  } catch { /* still worth the rm below */ }
+  for (const p of drop) {
+    try { gitExec(['rm', '--cached', '--quiet', '--', p]); } catch { /* never tracked */ }
+    note('oversized, left out of git: ' + p);
+  }
+}
+
 // A hook killed mid-commit leaves .git/index.lock, silently breaking all future
 // commits.
 // A lock older than half a minute used to be deleted outright. On a vault with
@@ -153,6 +195,42 @@ function clearStaleLock() {
     const until = Date.now() + 250;
     while (Date.now() < until) { /* spin */ }
   }
+}
+
+// Six sessions opened together mean six copies of this hook, all walking the
+// same project tree and committing the same repository. Contention is not the
+// worst of it: the one that loses the race still pays for a full scan, and a
+// run killed behind another's lock is what leaves temp objects behind.
+//
+// One runs, the rest step aside. The next session start picks up whatever the
+// skipped run would have copied; nothing is lost by waiting.
+const HOOK_LOCK_STALE_MS = 15 * 60_000;
+
+function hookLockPath() {
+  return path.join(VAULT_DIR, '.arca', 'hook.lock');
+}
+
+function takeHookLock() {
+  const lock = hookLockPath();
+  try {
+    fs.mkdirSync(path.dirname(lock), { recursive: true });
+    fs.writeFileSync(lock, String(process.pid), { flag: 'wx' });
+    return true;
+  } catch (e) {
+    if (e && e.code !== 'EEXIST') return true; // cannot judge: do the work
+  }
+  let age;
+  try { age = Date.now() - fs.statSync(lock).mtimeMs; } catch { return true; }
+  if (age <= HOOK_LOCK_STALE_MS) return false;
+  try { fs.unlinkSync(lock); } catch { return false; }
+  try {
+    fs.writeFileSync(lock, String(process.pid), { flag: 'wx' });
+    return true;
+  } catch { return false; }
+}
+
+function releaseHookLock() {
+  try { fs.unlinkSync(hookLockPath()); } catch { /* already gone */ }
 }
 
 // Everything derived or local, which is everything that must never reach a
@@ -488,6 +566,7 @@ async function backup() {
       const msg = copied > 0 || dirCopied > 0
         ? `vault: ${copied} sessions${dirCopied ? `, ${dirCopied} session-dir files` : ''} (${stamp})`
         : `vault: ${pending} pending changes (${stamp})`;
+      dropOversizedFromIndex(dirty);
       gitExec(['add', '-A']);
       // The vault ignores index/, models/, *.tmp and *.log for its own
       // artifacts, and those names are ordinary inside somebody's skills.
@@ -535,11 +614,15 @@ async function backup() {
   }
 }
 
-try {
-  await backup();
-} catch (e) {
-  // Never break session start — but never vanish either. Claude Code shows
-  // nothing when a hook fails, so the log is the only place a failure can
-  // surface. Swallowing it here is what let an ESM/CJS mismatch run silent.
-  try { note('hook failed: ' + ((e && e.stack) || e)); } catch {}
+if (takeHookLock()) {
+  try {
+    await backup();
+  } catch (e) {
+    // Never break session start — but never vanish either. Claude Code shows
+    // nothing when a hook fails, so the log is the only place a failure can
+    // surface. Swallowing it here is what let an ESM/CJS mismatch run silent.
+    try { note('hook failed: ' + ((e && e.stack) || e)); } catch {}
+  } finally {
+    releaseHookLock();
+  }
 }
