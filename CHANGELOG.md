@@ -6,6 +6,17 @@ The version numbers are small and the releases are close together because
 this was written quickly and corrected often; several of them exist only
 because a review found something that had already shipped.
 
+## 0.14.2 — 2026-11-12
+
+### Fixed
+
+- The summarizer's instruction had a third way in. When the cheap read finds no
+  prompt, the session is re-read from a wider tail window — and that reader
+  checked the echo list but not the preamble, so a session whose only turn was
+  that instruction still came back named after it. It also feeds `lastPrompt`,
+  which becomes the title when no generated one exists, which is why the
+  previous two fixes left twelve rows wrong.
+
 ## 0.14.1 — 2026-11-12
 
 ### Fixed
