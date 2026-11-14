@@ -233,6 +233,47 @@ function releaseHookLock() {
   try { fs.unlinkSync(hookLockPath()); } catch { /* already gone */ }
 }
 
+// Committing on every session start turned each changed transcript into a new
+// blob, and the blobs are where the gigabytes went. The vault is a backup, not
+// a mirror: losing a few hours of history to a crash is cheaper than writing
+// the drive to death. A day by default; 0 restores commit-on-every-run.
+//
+// Configured by ARCA_COMMIT_INTERVAL_MINUTES, or by
+// .arca/hook.json {"commitIntervalMinutes": 60} in the vault.
+const COMMIT_INTERVAL_DEFAULT_MIN = 1440;
+const hookConfigPath = () => path.join(VAULT_DIR, '.arca', 'hook.json');
+const commitStampPath = () => path.join(VAULT_DIR, '.arca', 'last-commit.json');
+
+function commitIntervalMs() {
+  const fromEnv = Number(process.env.ARCA_COMMIT_INTERVAL_MINUTES);
+  if (process.env.ARCA_COMMIT_INTERVAL_MINUTES !== undefined && Number.isFinite(fromEnv) && fromEnv >= 0) {
+    return fromEnv * 60_000;
+  }
+  try {
+    const cfg = JSON.parse(fs.readFileSync(hookConfigPath(), 'utf8'));
+    const n = Number(cfg.commitIntervalMinutes);
+    if (Number.isFinite(n) && n >= 0) return n * 60_000;
+  } catch { /* no config file: the default stands */ }
+  return COMMIT_INTERVAL_DEFAULT_MIN * 60_000;
+}
+
+function commitDue() {
+  const interval = commitIntervalMs();
+  if (!interval) return true;
+  try {
+    const last = Number(JSON.parse(fs.readFileSync(commitStampPath(), 'utf8')).at);
+    if (Number.isFinite(last) && Date.now() - last < interval) return false;
+  } catch { /* never committed, or unreadable: commit */ }
+  return true;
+}
+
+function markCommitted() {
+  try {
+    fs.mkdirSync(path.dirname(commitStampPath()), { recursive: true });
+    fs.writeFileSync(commitStampPath(), JSON.stringify({ at: Date.now() }));
+  } catch { /* the next run simply commits again */ }
+}
+
 // Everything derived or local, which is everything that must never reach a
 // remote: the search index, the 90 MB embedding model, logs, and the file
 // naming which machine this is — if that one travelled, a pull would tell the
@@ -305,6 +346,56 @@ const SESSION_DIR = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{1
  * 'copied' | 'skipped' | 'error'. One rule for transcripts and for everything
  * in a session directory, so the two cannot drift apart.
  */
+// Transcripts grow by appending, and the hook used to rewrite them end to end
+// anyway: a 2 GB session that gained 2 MB cost a 2 GB copy, twice per start
+// once git had committed it. This drive logged 13 TB written in ~690 hours.
+//
+// Appending is safe only if the vault's copy really is a prefix of the source.
+// "The source grew" and "the source was rewritten and is longer" look identical
+// from stat, so the last few KB both files share are compared first; a
+// mismatch falls back to the full copy below.
+const OVERLAP_PROBE = 4096;
+const APPEND_CHUNK = 8 * 1024 * 1024;
+
+function readAt(fd, position, length) {
+  const buf = Buffer.alloc(length);
+  const n = fs.readSync(fd, buf, 0, length, position);
+  return n === length ? buf : buf.subarray(0, n);
+}
+
+// Returns false when the copies differ and a full copy is needed. Writes land
+// on the real name rather than a temporary one, deliberately: a run killed
+// mid-append leaves a short file, and the next run appends from whatever
+// length it finds, so a torn write heals itself on the following start.
+function appendTail(src, dst, from) {
+  let srcFd;
+  try {
+    srcFd = fs.openSync(src, 'r');
+    const srcSize = fs.fstatSync(srcFd).size;
+    const dstFd = fs.openSync(dst, 'r+');
+    try {
+      const probe = Math.min(OVERLAP_PROBE, from);
+      if (probe > 0
+        && !readAt(srcFd, from - probe, probe).equals(readAt(dstFd, from - probe, probe))) {
+        return false;
+      }
+      for (let pos = from; pos < srcSize;) {
+        const chunk = readAt(srcFd, pos, Math.min(APPEND_CHUNK, srcSize - pos));
+        if (!chunk.length) break;
+        fs.writeSync(dstFd, chunk, 0, chunk.length, pos);
+        pos += chunk.length;
+      }
+      return true;
+    } finally {
+      fs.closeSync(dstFd);
+    }
+  } catch {
+    return false;
+  } finally {
+    if (srcFd !== undefined) try { fs.closeSync(srcFd); } catch {}
+  }
+}
+
 function copyIfChanged(src, dst) {
   // Size is not identity. Transcripts are append-only in normal use, but a
   // replaced or rewritten one that happens to be the same size or smaller
@@ -318,6 +409,7 @@ function copyIfChanged(src, dst) {
       const notOlder = dstStat.mtimeMs >= srcStat.mtimeMs;
       if (sameSize && notOlder) return 'skipped';
       if (dstStat.size > srcStat.size && notOlder) return 'skipped';
+      if (srcStat.size > dstStat.size && appendTail(src, dst, dstStat.size)) return 'appended';
     } catch { /* re-copy on error */ }
   }
 
@@ -377,7 +469,7 @@ function mirrorSessionDir(srcDir, dstDir) {
       if (e.isDirectory()) { walk(from, to, inSubagents || e.name === 'subagents'); continue; }
       if (!e.isFile()) continue;
       const outcome = copyIfChanged(from, to);
-      if (outcome === 'copied') {
+      if (outcome === 'copied' || outcome === 'appended') {
         r.copied++;
         if (inSubagents && e.name.endsWith('.jsonl')) r.transcripts.push(to);
       } else if (outcome === 'skipped') r.skipped++;
@@ -407,6 +499,7 @@ async function backup() {
   ensureGitignore();
 
   let copied = 0;
+  let appended = 0;
   let skipped = 0;
   let errors = 0;
   // Transcripts copied this run: what the machine claims and the commit
@@ -449,8 +542,9 @@ async function backup() {
       const dst = path.join(vaultProjDir, file.name);
       const outcome = copyIfChanged(path.join(projPath, file.name), dst);
       if (outcome !== 'skipped') moved.add(file.name.slice(0, -'.jsonl'.length));
-      if (outcome === 'copied') {
+      if (outcome === 'copied' || outcome === 'appended') {
         copied++;
+        if (outcome === 'appended') appended++;
         copiedFiles.push(dst);
         toIndex.push(dst);
       } else if (outcome === 'skipped') skipped++;
@@ -560,7 +654,9 @@ async function backup() {
     clearStaleLock();
     let dirty = '';
     try { dirty = gitRead(['status', '--porcelain']) || ''; } catch { dirty = ''; }
-    if (dirty.trim()) {
+    if (dirty.trim() && !commitDue()) {
+      note(`commit deferred: ${Math.round(commitIntervalMs() / 60_000)} min interval not elapsed`);
+    } else if (dirty.trim()) {
       const pending = dirty.trim().split(String.fromCharCode(10)).length;
       const stamp = new Date().toISOString().slice(0, 19);
       const msg = copied > 0 || dirCopied > 0
@@ -574,13 +670,14 @@ async function backup() {
       // committed, which is the one thing a backup must not do.
       try { gitExec(['add', '-f', 'config']); } catch { /* no config copy yet */ }
       gitExec(['commit', '-m', msg]);
+      markCommitted();
     }
   } catch (e) { note('git commit failed: ' + ((e && e.message) ? e.message.slice(0, 200) : e)); }
 
   // Append to log
   try {
     const logFile = path.join(VAULT_DIR, 'vault.log');
-    const line = `${new Date().toISOString()} copied=${copied} dir=${dirCopied} skipped=${skipped} errors=${errors}\n`;
+    const line = `${new Date().toISOString()} copied=${copied} appended=${appended} dir=${dirCopied} skipped=${skipped} errors=${errors}\n`;
     fs.appendFileSync(logFile, line);
   } catch {}
 
