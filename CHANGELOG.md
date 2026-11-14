@@ -6,6 +6,26 @@ The version numbers are small and the releases are close together because
 this was written quickly and corrected often; several of them exist only
 because a review found something that had already shipped.
 
+## 0.14.3 — 2026-11-14
+
+### Changed
+
+- **The hook appends instead of recopying.** A transcript that gained a few
+  megabytes was rewritten end to end on every session start, twice over once
+  git had committed it. On the machine this was measured on, that came to
+  13 TB written in ~690 hours for a 10 GB archive. The copy now writes only the
+  bytes the vault is missing. Since "the source grew" and "the source was
+  rewritten and is longer" are identical from stat, the last 4 KB the two files
+  share are compared first, and a mismatch still falls back to a full copy.
+  Appends land on the real name rather than a temp file: a torn write leaves a
+  short file that the next run simply continues from.
+- **Commits are throttled to one a day.** Every changed transcript became a
+  fresh blob on every session start, and the blobs are where the space went.
+  A session also reported as "copied" on every run for the same reason. Set
+  `ARCA_COMMIT_INTERVAL_MINUTES`, or `{"commitIntervalMinutes": N}` in
+  `.arca/hook.json`; `0` restores a commit on every run. The log line gained an
+  `appended` counter so the two paths stay distinguishable.
+
 ## 0.14.2 — 2026-11-12
 
 ### Fixed
