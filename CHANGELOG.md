@@ -6,6 +6,28 @@ The version numbers are small and the releases are close together because
 this was written quickly and corrected often; several of them exist only
 because a review found something that had already shipped.
 
+## 0.15.0 — 2026-11-14
+
+### Added
+
+- **Chunked transcripts.** Past `chunkThresholdBytes` (50 MB by default) a
+  session is stored as `part-NNNN.jsonl` pieces under its own directory instead
+  of one file. Parts rotate at a line boundary, and each is frozen with a hash
+  and a line count once it fills; only the growing part changes after that, so a
+  session that gains a few kilobytes costs a few kilobytes. The joint is
+  verified before appending, and a source that disagrees — shorter, or the same
+  length with different bytes — replaces the parts rather than being patched.
+  Both sizes are settings in `.arca/hook.json`: `chunkThresholdBytes`,
+  `partBytes`.
+- The walker, `read`, `restore` and the indexer each read parts in order, so a
+  chunked session lists, pages, restores and searches exactly like a single-file
+  one. Sessions below the threshold, and every session already in the vault as a
+  single file, are untouched.
+- `migrate-chunks.js` converts existing single-file sessions past the threshold.
+  It hashes the parts against the original and only then removes it; a failure
+  leaves the file exactly as it was. `ARCA_MIGRATE_SKIP` names sessions to leave
+  alone.
+
 ## 0.14.3 — 2026-11-14
 
 ### Changed

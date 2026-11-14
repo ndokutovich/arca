@@ -1,6 +1,6 @@
 {
   "name": "@ndokutovich/arca",
-  "version": "0.14.3",
+  "version": "0.15.0",
   "description": "Keep the raw transcript. A local-first vault for coding-agent history — transcripts verbatim in git, indexed for hybrid search, served over MCP.",
   "type": "module",
   "main": "mcp-server.js",
@@ -66,7 +66,9 @@
     "LICENSE",
     "SECURITY.md",
     "CHANGELOG.md",
-    "!**/*.test.js"
+    "!**/*.test.js",
+    "migrate-chunks.js",
+    "docs/"
   ],
   "bin": {
     "arca": "cli.js"
