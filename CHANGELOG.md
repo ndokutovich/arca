@@ -10,18 +10,14 @@ because a review found something that had already shipped.
 
 ### Changed
 
-- **The hook appends instead of recopying.** A transcript that gained a few
-  megabytes was rewritten end to end on every session start, twice over once
-  git had committed it. On the machine this was measured on, that came to
-  13 TB written in ~690 hours for a 10 GB archive. The copy now writes only the
-  bytes the vault is missing. Since "the source grew" and "the source was
-  rewritten and is longer" are identical from stat, the last 4 KB the two files
-  share are compared first, and a mismatch still falls back to a full copy.
-  Appends land on the real name rather than a temp file: a torn write leaves a
-  short file that the next run simply continues from.
-- **Commits are throttled to one a day.** Every changed transcript became a
-  fresh blob on every session start, and the blobs are where the space went.
-  A session also reported as "copied" on every run for the same reason. Set
+- **The hook appends instead of recopying.** Only the bytes the vault copy is
+  missing are written. Since "the source grew" and "the source was rewritten
+  and is longer" are identical from stat, the last 4 KB both files share are
+  compared first; a mismatch still falls back to a full copy. Appends land on
+  the real name rather than a temp file: a torn write leaves a short file that
+  the next run continues from.
+- **Commits are throttled to one a day.** A transcript that changes on every
+  session start otherwise becomes a fresh blob on every session start. Set
   `ARCA_COMMIT_INTERVAL_MINUTES`, or `{"commitIntervalMinutes": N}` in
   `.arca/hook.json`; `0` restores a commit on every run. The log line gained an
   `appended` counter so the two paths stay distinguishable.
@@ -30,23 +26,19 @@ because a review found something that had already shipped.
 
 ### Fixed
 
-- The summarizer's instruction had a third way in. When the cheap read finds no
-  prompt, the session is re-read from a wider tail window — and that reader
-  checked the echo list but not the preamble, so a session whose only turn was
-  that instruction still came back named after it. It also feeds `lastPrompt`,
-  which becomes the title when no generated one exists, which is why the
-  previous two fixes left twelve rows wrong.
+- The summarizer's instruction had a third entry point: the wide tail read used
+  when the cheap read finds no prompt checked the echo list but not the
+  preamble. It also feeds `lastPrompt`, which becomes the title when no
+  generated one exists.
 
 ## 0.14.1 — 2026-11-12
 
 ### Fixed
 
-- 0.14.0 skipped the summarizer's instruction only when it arrived as a
-  compaction entry's `summary` field. On the sessions that were actually
-  broken it arrives as a **user turn** — the instruction recorded verbatim —
-  and with no generated title present it became the first prompt, and so the
-  title. It is filtered there too, and the parser version is bumped again so
-  the cached rows are re-read.
+- The summarizer's instruction is filtered both as a compaction entry's
+  `summary` field and as a **user turn**, where it can also appear verbatim.
+  With no generated title present it becomes the first prompt, and so the
+  title. The parser version is bumped so cached rows are re-read.
 
 ## 0.14.0 — 2026-11-12
 
@@ -66,18 +58,17 @@ because a review found something that had already shipped.
 ### Fixed
 
 - Session titles no longer come from a compaction entry's `summary` field when
-  that field holds the summarizer's own instruction. Half the index was named
-  "Context: This summary will be shown in a list to help users…". The metadata
-  cache key now carries a parser version, so wrong titles are re-derived once
-  instead of surviving until each transcript changes.
+  that field holds the summarizer's own instruction rather than a summary. The
+  metadata cache key now carries a parser version, so titles derived the wrong
+  way are re-derived once instead of surviving until each transcript changes.
 
 ### Changed
 
 - The vault hook stops committing a transcript once it passes 200 MB. Git
-  re-hashes the whole blob on every change, and on a full disk behind a virus
-  scanner that is minutes per attempt — long past the hook's timeout. The file
-  stays in the vault; only git stops tracking it. The hook also takes a lock, so
-  six sessions starting together do not all copy and commit at once.
+  re-hashes the whole blob on every change, which for a file that size can
+  outlast the hook's timeout. The file stays in the vault; only git stops
+  tracking it. The hook also takes a lock, so sessions starting together do not
+  all copy and commit at once.
 
 ## 0.13.0 — 2026-10-25
 

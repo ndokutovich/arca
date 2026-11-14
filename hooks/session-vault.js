@@ -119,11 +119,10 @@ function note(msg) {
   } catch (_) {}
 }
 
-// A transcript that grows past a quarter gigabyte cannot be committed. Git
-// re-hashes the whole blob on every change; on a full disk behind a virus
-// scanner that is minutes per attempt, and the commit step is killed long
-// before it finishes — forty days of that is what filled the vault with
-// half-gigabyte temporary objects nobody could reclaim.
+// A transcript that grows past a quarter gigabyte cannot be committed: git
+// re-hashes the whole blob on every change, and for a file that size the work
+// can outlast the hook's timeout. A run killed mid-add leaves a temporary
+// object behind, and the next run starts the same hash again.
 //
 // The vault keeps such a file on disk; git stops tracking it. Left in the
 // index, every later run would repeat the same doomed hash.
@@ -233,10 +232,11 @@ function releaseHookLock() {
   try { fs.unlinkSync(hookLockPath()); } catch { /* already gone */ }
 }
 
-// Committing on every session start turned each changed transcript into a new
-// blob, and the blobs are where the gigabytes went. The vault is a backup, not
-// a mirror: losing a few hours of history to a crash is cheaper than writing
-// the drive to death. A day by default; 0 restores commit-on-every-run.
+// Committing on every session start turns each changed transcript into a new
+// blob, and the blobs are where the space goes. The vault is a backup, not a
+// mirror: losing a few hours of history to a crash is cheaper than rewriting
+// every transcript on every start. A day by default; 0 restores
+// commit-on-every-run.
 //
 // Configured by ARCA_COMMIT_INTERVAL_MINUTES, or by
 // .arca/hook.json {"commitIntervalMinutes": 60} in the vault.
@@ -347,8 +347,8 @@ const SESSION_DIR = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{1
  * in a session directory, so the two cannot drift apart.
  */
 // Transcripts grow by appending, and the hook used to rewrite them end to end
-// anyway: a 2 GB session that gained 2 MB cost a 2 GB copy, twice per start
-// once git had committed it. This drive logged 13 TB written in ~690 hours.
+// anyway: a large session that gained a few kilobytes cost a full copy, twice
+// per start once git had committed it.
 //
 // Appending is safe only if the vault's copy really is a prefix of the source.
 // "The source grew" and "the source was rewritten and is longer" look identical
