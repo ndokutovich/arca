@@ -27,6 +27,7 @@
 
 import fs from 'fs';
 import path from 'path';
+import { syncChunks, listParts, DEFAULTS as CHUNK_DEFAULTS } from '../lib/chunks.js';
 import { execFileSync, spawn } from 'child_process';
 import { fileURLToPath, pathToFileURL } from 'url';
 
@@ -396,6 +397,37 @@ function appendTail(src, dst, from) {
   }
 }
 
+// Past the threshold a transcript is stored as parts inside its session
+// directory; below it, one file, as before. Only the source's size decides, and
+// a single file already in the vault is never converted behind its back —
+// restoring a session has to keep finding whatever shape it was written in.
+function chunkSetting(key, fallback) {
+  try {
+    const cfg = JSON.parse(fs.readFileSync(path.join(VAULT_DIR, '.arca', 'hook.json'), 'utf8'));
+    const n = Number(cfg[key]);
+    if (Number.isFinite(n) && n > 0) return n;
+  } catch { /* default */ }
+  return fallback;
+}
+
+function transcriptCopy(src, dst, sessionDir) {
+  let size;
+  try { size = fs.statSync(src).size; } catch { return { outcome: copyIfChanged(src, dst), paths: [dst] }; }
+
+  const threshold = chunkSetting('chunkThresholdBytes', CHUNK_DEFAULTS.thresholdBytes);
+  if (size >= threshold && !fs.existsSync(dst)) {
+    try {
+      const partBytes = chunkSetting('partBytes', CHUNK_DEFAULTS.partBytes);
+      const r = syncChunks(sessionDir, src, { partBytes });
+      return {
+        outcome: r === 'unchanged' ? 'skipped' : 'copied',
+        paths: listParts(sessionDir).map((p) => p.path),
+      };
+    } catch { return { outcome: 'error', paths: [] }; }
+  }
+  return { outcome: copyIfChanged(src, dst), paths: [dst] };
+}
+
 function copyIfChanged(src, dst) {
   // Size is not identity. Transcripts are append-only in normal use, but a
   // replaced or rewritten one that happens to be the same size or smaller
@@ -539,14 +571,17 @@ async function backup() {
     // which is no evidence that nothing changed.
     const moved = new Set();
     for (const file of files) {
+      const sessionId = file.name.slice(0, -'.jsonl'.length);
       const dst = path.join(vaultProjDir, file.name);
-      const outcome = copyIfChanged(path.join(projPath, file.name), dst);
-      if (outcome !== 'skipped') moved.add(file.name.slice(0, -'.jsonl'.length));
+      const { outcome, paths } = transcriptCopy(
+        path.join(projPath, file.name), dst, path.join(vaultProjDir, sessionId),
+      );
+      if (outcome !== 'skipped') moved.add(sessionId);
       if (outcome === 'copied' || outcome === 'appended') {
         copied++;
         if (outcome === 'appended') appended++;
         copiedFiles.push(dst);
-        toIndex.push(dst);
+        toIndex.push(...paths);
       } else if (outcome === 'skipped') skipped++;
       else errors++;
     }
